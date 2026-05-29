@@ -308,6 +308,7 @@ export default function App() {
   // Main Store State
   const [storeState, setStoreState] = useState<SystemState | null>(null);
   const [activeTab, setActiveTab] = useState<"orders" | "products" | "delivery" | "insights" | "bot_config" | "live_support" | "smart_marketing">("orders");
+  const [botConnectionTab, setBotConnectionTab] = useState<"messenger" | "telegram">("messenger");
   const [activeSessionId, setActiveSessionId] = useState<string>("default_customer");
 
   // Loaders

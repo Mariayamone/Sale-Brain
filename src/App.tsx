@@ -25,7 +25,10 @@ import {
   ExternalLink,
   Smartphone,
   Languages,
-  Send
+  Send,
+  Facebook,
+  Globe,
+  Copy
 } from "lucide-react";
 
 import { CustomChart } from "./components/CustomChart";
@@ -294,7 +297,7 @@ export default function App() {
   const [botConnectionTab, setBotConnectionTab] = useState<"telegram" | "messenger">("telegram");
 
   // Helper dictionary access
-  const t = (key: keyof typeof dict['en']) => {
+  const t = (key: keyof typeof dict['en']): any => {
     return dict[lang][key] || dict['en'][key];
   };
 
@@ -748,14 +751,17 @@ export default function App() {
         onLangChange={setLang}
         onComplete={async (profile, aiSummary) => {
           // Instantly patch the frontend memory block for zero-delay entry feel
+          const updatedConfig = {
+            ...storeState.config,
+            shopName: profile.shopName,
+            ownerName: profile.ownerName,
+            onboardingCompleted: true,
+            shopId: profile.shopId,
+            publicUrl: profile.publicUrl
+          };
           const updatedState = {
             ...storeState,
-            config: {
-              ...storeState.config,
-              shopName: profile.shopName,
-              ownerName: profile.ownerName,
-              onboardingCompleted: true
-            }
+            config: updatedConfig
           };
           setStoreState(updatedState);
           setAiAnalysisText(aiSummary);
@@ -765,12 +771,7 @@ export default function App() {
             await fetch("/api/onboarding", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...storeState.config,
-                shopName: profile.shopName,
-                ownerName: profile.ownerName,
-                onboardingCompleted: true
-              })
+              body: JSON.stringify(updatedConfig)
             });
             showToast(
               lang === "my"
@@ -855,20 +856,23 @@ export default function App() {
           <button
             onClick={async () => {
               // Update local state is instantaneous
-              setStoreState((prev) => ({
-                ...prev,
-                config: {
-                  ...prev.config,
-                  onboardingCompleted: false
-                }
-              }));
+              setStoreState((prev) => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  config: {
+                    ...prev.config,
+                    onboardingCompleted: false
+                  }
+                };
+              });
               // Synchronously tell backend to set onboardingCompleted to false so poller doesn't override
               try {
                 await fetch("/api/onboarding", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
-                    ...storeState.config,
+                    ...(storeState?.config || {}),
                     onboardingCompleted: false
                   })
                 });
@@ -1157,7 +1161,7 @@ export default function App() {
                               </td>
                               <td className="p-3 font-sans text-[10px] text-slate-500 leading-tight">
                                 <span className="font-medium text-slate-700 block">{o.township}</span>
-                                <span className="text-[9px] text-slate-400 line-clamp-1">{o.shippingAddress}</span>
+                                <span className="text-[9px] text-slate-400 line-clamp-1">{o.addressDetails}</span>
                               </td>
                               <td className="p-3">
                                 <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
@@ -1706,6 +1710,95 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+
+                {/* SHARED PUBLIC SHOP LINK & PROMOTION HUB (COMPACT) */}
+                {storeState.config.publicUrl && (
+                  <div className="mt-4 p-3 bg-indigo-50/50 border border-indigo-100 rounded-2xl shadow-sm flex flex-col sm:flex-row gap-4">
+                    {/* Left: Info & Sharing */}
+                    <div className="flex-1 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Globe size={14} className="text-indigo-600" />
+                          <h4 className="text-[11px] font-extrabold text-slate-900 uppercase tracking-tight">
+                            {lang === "my" ? "သင့်ဆိုင်၏ လင့်ခ်" : "Shop Public Link"}
+                          </h4>
+                        </div>
+                        <div className="px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[7px] font-extrabold uppercase tracking-tighter animate-pulse">
+                          Live
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 bg-white border border-indigo-100 rounded-xl p-1 shadow-inner">
+                        <div className="flex-1 px-2.5 text-[10px] font-medium text-slate-500 truncate italic">
+                          {storeState.config.publicUrl}
+                        </div>
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(storeState.config.publicUrl!);
+                            showToast(lang === "my" ? "လင့်ခ်ကို ကူးယူပြီးပါပြီ" : "Link copied!", "success");
+                          }}
+                          className="p-1.5 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all cursor-pointer"
+                          title={lang === "my" ? "ကူးယူပါ" : "Copy"}
+                        >
+                          <Copy size={12} />
+                        </button>
+                        <a
+                          href={storeState.config.publicUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 transition-all cursor-pointer shadow-sm"
+                        >
+                          <ExternalLink size={12} />
+                        </a>
+                      </div>
+
+                      <div className="flex items-center gap-3">
+                        <span className="text-[8px] font-extrabold text-indigo-400 uppercase tracking-widest">
+                          {lang === "my" ? "မျှဝေပါ" : "Share"}:
+                        </span>
+                        <div className="flex gap-1.5">
+                          <a
+                            href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(storeState.config.publicUrl)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg bg-white border border-slate-100 hover:border-blue-300 hover:bg-blue-50 transition-all cursor-pointer text-[#1877F2]"
+                            title="Facebook"
+                          >
+                            <Facebook size={12} fill="currentColor" />
+                          </a>
+                          <a
+                            href={`https://t.me/share/url?url=${encodeURIComponent(storeState.config.publicUrl)}&text=${encodeURIComponent(lang === "my" ? "ကျွန်ုပ်တို့၏ဆိုင်တွင် ဈေးဝယ်ထွက်ရန် ဖိတ်ခေါ်အပ်ပါသည်!" : "Come shop at our store!")}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg bg-white border border-slate-100 hover:border-sky-300 hover:bg-sky-50 transition-all cursor-pointer text-[#229ED9]"
+                            title="Telegram"
+                          >
+                            <Send size={12} fill="currentColor" />
+                          </a>
+                          <a
+                            href={`viber://forward?text=${encodeURIComponent(lang === "my" ? "ကျွန်ုပ်တို့၏ဆိုင်တွင် ဈေးဝယ်ထွက်ရန် ဖိတ်ခေါ်အပ်ပါသည်! " : "Come shop at our store! ") + encodeURIComponent(storeState.config.publicUrl)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1.5 rounded-lg bg-white border border-slate-100 hover:border-purple-300 hover:bg-purple-50 transition-all cursor-pointer text-[#7360F2]"
+                            title="Viber"
+                          >
+                            <Smartphone size={12} />
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right: QR Code (Compact) */}
+                    <div className="flex flex-col items-center justify-center p-2.5 bg-white rounded-xl border border-indigo-100 border-dashed shrink-0 sm:w-24">
+                      <img 
+                        src={`https://api.qrserver.com/v1/create-qr-code/?size=100x100&data=${encodeURIComponent(storeState.config.publicUrl)}&color=4f46e5`}
+                        alt="QR"
+                        className="w-16 h-16 opacity-90"
+                      />
+                      <span className="mt-1 text-[7px] font-bold text-slate-400 uppercase tracking-tighter">QR Scanner</span>
+                    </div>
+                  </div>
+                )}
 
                 {botConnectionTab === "telegram" && (
                   <>

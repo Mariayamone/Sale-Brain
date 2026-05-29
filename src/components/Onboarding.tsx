@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Smartphone,
@@ -25,8 +25,11 @@ import {
   Briefcase,
   Layers,
   HelpCircle,
-  FileText
+  FileText,
+  Copy,
+  ExternalLink
 } from "lucide-react";
+import { generateShopId, buildShopPublicUrl } from "../utils/shop-id";
 
 export interface OnboardingProfile {
   shopName: string;
@@ -39,6 +42,8 @@ export interface OnboardingProfile {
   businessChallenge: string;
   marketingMethods: string[];
   businessGoal: string;
+  shopId?: string;
+  publicUrl?: string;
 }
 
 interface OnboardingProps {
@@ -73,6 +78,24 @@ export function Onboarding({
   const [loadingSummary, setLoadingSummary] = useState<boolean>(false);
   const [aiSummaryHtml, setAiSummaryHtml] = useState<string>("");
   const [summaryShown, setSummaryShown] = useState<boolean>(false);
+  const [copied, setCopied] = useState(false);
+
+  // Generate shopId and publicUrl when summary is shown
+  useEffect(() => {
+    if (summaryShown && !profile.shopId) {
+      const shopId = generateShopId();
+      const publicUrl = buildShopPublicUrl(shopId);
+      setProfile(prev => ({ ...prev, shopId, publicUrl }));
+    }
+  }, [summaryShown, profile.shopId]);
+
+  const handleCopyLink = () => {
+    if (profile.publicUrl) {
+      navigator.clipboard.writeText(profile.publicUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   // SECTION 1 options
   const categoriesList = [
@@ -189,7 +212,36 @@ export function Onboarding({
 
   // Submit profile answers to backend, generate summary using Gemini
   const handleFinalSubmit = async () => {
-    onComplete(profile, "Initial onboarding profile saved! Feel free to request customized smart marketing campaigns or re-evaluate core strategy inside the AI Advisor Desk.");
+    setStep(4);
+    setLoadingSummary(true);
+
+    try {
+      // Call dedicated Gemini onboarding summary endpoint
+      const response = await fetch("/api/ai/onboarding-summary", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: profile })
+      });
+
+      let text = "";
+      if (response.ok) {
+        const data = await response.json();
+        text = data.summary;
+      } else {
+        // Fallback briefing if API is offline
+        text = lang === "my"
+          ? "၁။ လုပ်ငန်းအချက်အလက်များကို ဆန်းစစ်ချက်အရ သင့်ဆိုင်အတွက် အသင့်တော်ဆုံး တယ်လီဂရမ် ဘော့တ်နှင့် မားကက်တင်း စနစ်ကို ပြင်ဆင်ပေးလိုက်ပါပြီ။\n၂။ ဝယ်သူများအနေဖြင့် ပိုမိုလွယ်ကူစွာ ဝယ်ယူနိုင်ရန် ကက်တလော့များကို စနစ်တကျ ပြသပေးသွားမည်ဖြစ်ပါသည်။\n၃။ ရောင်းအားတက်စေရန် အေအိုင် အကြံပေးချက်များကို ဒက်ရှ်ဘုတ်အတွင်း ဆက်လက်ကြည့်ရှုနိုင်ပါသည်။"
+          : "1. Based on your business profile, we have optimized your Telegram Bot and Marketing Engine for maximum conversion.\n2. Your products will be presented clearly to your target audience to ensure a smooth shopping experience.\n3. You can continue to receive real-time AI strategic advice inside your SME dashboard.";
+      }
+
+      setAiSummaryHtml(text);
+      setSummaryShown(true);
+    } catch (err) {
+      console.error("[Onboarding] AI Briefing Error:", err);
+      setSummaryShown(true);
+    } finally {
+      setLoadingSummary(false);
+    }
   };
 
   // Step names localization
@@ -270,6 +322,49 @@ export function Onboarding({
               {aiSummaryHtml}
             </div>
           </div>
+
+          {/* Public Shop Link Display */}
+          {profile.publicUrl && (
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 shadow-inner">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono font-bold text-slate-500 uppercase tracking-tight">
+                  {lang === "my" ? "သင့်ဆိုင်၏ အများသုံးလင့်ခ်" : "Your Public Shop Link"}
+                </span>
+                <span className="text-[9px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full uppercase">Live</span>
+              </div>
+              
+              <div className="flex items-center gap-2">
+                <div className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-[11px] font-medium text-indigo-600 truncate shadow-sm">
+                  {profile.publicUrl}
+                </div>
+                <button
+                  onClick={handleCopyLink}
+                  className={`p-2.5 rounded-xl border transition-all cursor-pointer shadow-sm ${
+                    copied 
+                      ? "bg-emerald-500 border-emerald-500 text-white" 
+                      : "bg-white border-slate-200 text-slate-600 hover:border-slate-400"
+                  }`}
+                  title={lang === "my" ? "လင့်ခ်ကို ကူးယူပါ" : "Copy Link"}
+                >
+                  {copied ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+                <a
+                  href={profile.publicUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="p-2.5 rounded-xl border border-slate-200 bg-white text-slate-600 hover:border-slate-400 transition-all cursor-pointer shadow-sm"
+                  title={lang === "my" ? "လင့်ခ်ကို ဖွင့်ပါ" : "Open Link"}
+                >
+                  <ExternalLink size={14} />
+                </a>
+              </div>
+              <p className="text-[9px] text-slate-400 font-medium text-center italic">
+                {lang === "my" 
+                  ? "ဤလင့်ခ်ကို ဝယ်သူများထံ တိုက်ရိုက်ပေးပို့၍ ရောင်းချနိုင်ပါသည်" 
+                  : "Share this link with your customers to start accepting orders immediately."}
+              </p>
+            </div>
+          )}
 
           {/* Call to action button to route back to actual workspace */}
           <div className="text-center pt-2">

@@ -31,7 +31,9 @@ const DEFAULT_STATE: SystemState = {
     messengerVerifyToken: "",
     messengerBotId: "messenger",
     messengerBotName: "Messenger Bot",
-    onboardingCompleted: false
+    onboardingCompleted: false,
+    shopId: "",
+    publicUrl: ""
   },
   products: [
     {
@@ -331,7 +333,9 @@ app.post("/api/onboarding", async (req, res) => {
     messengerVerifyToken,
     messengerBotId,
     messengerBotName,
-    onboardingCompleted
+    onboardingCompleted,
+    shopId,
+    publicUrl
   } = req.body;
   state.config = {
     shopName: shopName || "SME Store",
@@ -344,7 +348,9 @@ app.post("/api/onboarding", async (req, res) => {
     messengerVerifyToken: messengerVerifyToken || "",
     messengerBotId: messengerBotId || "messenger",
     messengerBotName: messengerBotName || "Messenger Bot",
-    onboardingCompleted: onboardingCompleted !== undefined ? onboardingCompleted : true
+    onboardingCompleted: onboardingCompleted !== undefined ? onboardingCompleted : true,
+    shopId: shopId || "",
+    publicUrl: publicUrl || ""
   };
   saveState();
 
@@ -1038,10 +1044,11 @@ app.post("/api/bot/simulate-input", async (req, res) => {
 // 9. AI STRATEGIC INSIGHTS AND RECOMMENDATIONS ENDPOINT
 app.post("/api/ai/strategy", async (req, res) => {
   const force = req.query.force === "true" || req.body?.force === true;
+  const isOnboarding = req.query.onboarding === "true";
   const lang = req.query.lang || req.body?.lang || "en";
   const now = Date.now();
   
-  if (!force) {
+  if (!force && !isOnboarding) {
     if (lang === "my" && cachedStrategyMy && (now - lastStrategyFetchTimeMy < STRATEGY_CACHE_TTL)) {
       console.log("[Sales Brain AI] Serving cached Myanmar business strategy to conserve Gemini API quota.");
       return res.json({ success: true, strategy: cachedStrategyMy });
@@ -1053,33 +1060,54 @@ app.post("/api/ai/strategy", async (req, res) => {
 
   try {
     const ai = getGeminiClient();
+    let systemInstruction = "";
+    let promptContents = "";
 
-    // Compile transaction history summary for Gemini to digest
-    const itemsPurchasedCount: { [name: string]: number } = {};
-    let totalRevenue = 0;
-    
-    state.orders.forEach(o => {
-      if (o.status !== "cancelled") {
-        totalRevenue += o.totalAmount - o.deliveryFee;
-        o.items.forEach(i => {
-          itemsPurchasedCount[i.productName] = (itemsPurchasedCount[i.productName] || 0) + i.quantity;
-        });
-      }
-    });
+    if (isOnboarding) {
+      const profile = req.body;
+      systemInstruction = `You are "Sales Brain", an elite business intelligence strategy advisor for SMEs in Myanmar.
+Your goal is to analyze the user's business onboarding profile and generate a high-level, encouraging, and specific growth blueprint.
+State your recommendations clearly in plain text format.
+CRITICAL FORMATTING MANDATES:
+1. DO NOT write any hash characters (#) or asterisks (*) anywhere in your output. Absolutely no "#", "##", "***", "**", "*".
+2. DO NOT use any emojis of any kind. No icons, no stars, no calendar symbols.
+3. Write completely in ${lang === "my" ? "the Myanmar language (Burmese)" : "English"}.
+4. Keep the response professional, clear, and focused on the first steps for this SME.
+5. Limit the response to under 250 words.
 
-    const inventoryStatus = state.products.map(p => `${p.name}: current stock ${p.stock} units (Price: ${p.price} MMK)`);
+Include in your response:
+1. PROFILE ANALYSIS (Based on their category and goals)
+2. IMMEDIATE ACTION STEPS (First 3 things to do with their new AI Bot)
+3. TARGET AUDIENCE OPTIMIZATION`;
 
-    const schemaInput = {
-      analytics: {
-        total_revenue_mmk: totalRevenue,
-        order_count: state.orders.length,
-        items_ranking: itemsPurchasedCount
-      },
-      current_inventory: inventoryStatus,
-      shop_details: state.config
-    };
+      promptContents = `Onboarding Profile:\n${JSON.stringify(profile, null, 2)}\n\nGenerate initial growth blueprint:`;
+    } else {
+      // Compile transaction history summary for Gemini to digest
+      const itemsPurchasedCount: { [name: string]: number } = {};
+      let totalRevenue = 0;
+      
+      state.orders.forEach(o => {
+        if (o.status !== "cancelled") {
+          totalRevenue += o.totalAmount - o.deliveryFee;
+          o.items.forEach(i => {
+            itemsPurchasedCount[i.productName] = (itemsPurchasedCount[i.productName] || 0) + i.quantity;
+          });
+        }
+      });
 
-    const systemInstruction = `You are "Sales Brain", an elite business intelligence strategy advisor for SMEs in Myanmar.
+      const inventoryStatus = state.products.map(p => `${p.name}: current stock ${p.stock} units (Price: ${p.price} MMK)`);
+
+      const schemaInput = {
+        analytics: {
+          total_revenue_mmk: totalRevenue,
+          order_count: state.orders.length,
+          items_ranking: itemsPurchasedCount
+        },
+        current_inventory: inventoryStatus,
+        shop_details: state.config
+      };
+
+      systemInstruction = `You are "Sales Brain", an elite business intelligence strategy advisor for SMEs in Myanmar.
 Your goal is to look at the store's backend analytics data, purchase counts, and stock levels, and generate high-value, specific strategy report.
 State your recommendations clearly in plain text format.
 CRITICAL FORMATTING MANDATES:
@@ -1095,9 +1123,12 @@ Include in your response:
 3. INVENTORY & CONVERSION ENHANCEMENTS (Check if any product stock is low)
 4. TAX / PRICING OPTIMIZATION ADVICE`;
 
+      promptContents = `Owner state schema:\n${JSON.stringify(schemaInput, null, 2)}\n\nGenerate Myanmar SME strategies:`;
+    }
+
     const aiRes = await ai.models.generateContent({
       model: "gemini-3.5-flash",
-      contents: `Owner state schema:\n${JSON.stringify(schemaInput, null, 2)}\n\nGenerate Myanmar SME strategies:`,
+      contents: promptContents,
       config: {
         systemInstruction,
         temperature: 0.3

@@ -120,7 +120,7 @@ export async function processCustomerMessage(
     session.currentStep = "selecting_township";
     session.tempPayMethod = checkoutOption;
     const townshipsList = ctx.state.deliveryZones.map(z => z.township);
-    
+
     // Auto-generate inline keyboard for townships
     const inlineKeyboard = townshipsList.map(t => [{ text: `🛵 ${t}`, callback_data: `township_${t}` }]);
 
@@ -253,14 +253,29 @@ RULES FOR DIALOGUE:
 
     const geminiInput = `CONVERSATION HISTORIC:\n${conversationHistory}\n\nCustomer just sent: "${content}"\n\nCandy, reply in beautiful customer-friendly dialogue:`;
 
-    const aiResponse = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
-      contents: geminiInput,
-      config: {
-        systemInstruction,
-        temperature: 0.7
+    let aiResponse;
+    const modelsToTry = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"];
+    let lastErr = null;
+
+    for (const modelName of modelsToTry) {
+      try {
+        console.log(`Attempting AI generation with model: ${modelName}`);
+        aiResponse = await ai.models.generateContent({
+          model: modelName,
+          contents: geminiInput,
+          config: {
+            systemInstruction,
+            temperature: 0.7
+          }
+        });
+        if (aiResponse) break;
+      } catch (err) {
+        lastErr = err;
+        console.warn(`Model ${modelName} failed, trying next...`, err);
       }
-    });
+    }
+
+    if (!aiResponse) throw lastErr || new Error("All AI models failed.");
 
     const botReplyText = aiResponse.text || "Mingalabar shin! Candy received your message. Please let me know how I can guide your shopping today! Premium Sweets always available. 💕";
 
@@ -336,7 +351,7 @@ export async function handleTelegramWebhook(ctx: ShopContext, body: Record<strin
     let customerName = "Telegram Customer";
     let telegramUsername = "";
     let content = "";
-    
+
     // Parameter payloads to feed inside centralized ctx.state evaluator
     let base64Image: string | undefined = undefined;
     let transactionId: string | undefined = undefined;
@@ -381,9 +396,9 @@ export async function handleTelegramWebhook(ctx: ShopContext, body: Record<strin
       chatId = callback_query.message.chat.id;
       telegramUsername = callback_query.from?.username || "";
       customerName = [callback_query.from?.first_name, callback_query.from?.last_name].filter(Boolean).join(" ") || "Telegram Customer";
-      
+
       const callbackData = callback_query.data || "";
-      
+
       // Stop Telegram keyboard spinner
       if (token && callback_query.id) {
         try {

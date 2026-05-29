@@ -6,8 +6,33 @@
 
 html, body {
   font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
-  font-size: 15px; /* Slightly bigger default for clear readability */
+  font-size: 16px; /* Slightly bigger default for clear readability */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Visibility Fixes */
+.text-slate-400 {
+  @apply text-slate-500 font-semibold; /* Increased contrast and slightly bold */
+}
+
+.text-slate-500 {
+  @apply text-slate-600 font-medium; /* Increased contrast and weight */
+}
+
+.text-\[10px\] {
+  @apply text-xs; /* Make 10px text slightly bigger */
+}
+
+.text-\[9px\] {
+  @apply text-[11px] font-semibold; /* Make 9px text much more visible */
+}
+
+.text-xs {
+  @apply text-sm; /* Shift xs to sm for better readability */
+}
+
+.uppercase.tracking-wider {
+  @apply font-bold; /* Ensure labels/subtitles are bold as requested */
 }
 

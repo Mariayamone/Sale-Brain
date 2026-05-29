@@ -73,12 +73,25 @@ export function ShopChatbot({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [language, setLanguage] = useState<Language>("en");
   const [composerExpanded, setComposerExpanded] = useState(false);
+  
+  // NEW: Local Chat State (Mimicking the backend agent)
+  const [cart, setCart] = useState<{ productId: string; quantity: number }[]>([]);
+  const [currentStep, setCurrentStep] = useState<string>("greeting");
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const composerInputRef = useRef<HTMLTextAreaElement>(null);
   const hasStarted = messages.length > 0;
   const copy = language === "en" ? ENGLISH_COPY : MYANMAR_COPY;
 
   const featuredProducts = useMemo(() => products.slice(0, 8), [products]);
+
+  // NEW: Calculate Total
+  const cartTotal = useMemo(() => {
+    return cart.reduce((sum, item) => {
+      const p = products.find(prod => prod.id === item.productId);
+      return sum + (p ? p.price * item.quantity : 0);
+    }, 0);
+  }, [cart, products]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -162,6 +175,8 @@ export function ShopChatbot({
     setLoading(true);
 
     try {
+      // 1. Try Supabase Edge Function first
+      console.log("[Chatbot] Attempting backend chat...");
       const { data, error } = await supabase.functions.invoke("shop", {
         body: {
           action: "chat",
@@ -171,26 +186,117 @@ export function ShopChatbot({
         }
       });
 
-      if (!error && data) {
-        // Extract the last bot message from the returned session
+      if (!error && data?.session) {
         const session = data.session;
         const lastMsg = session.messages[session.messages.length - 1];
         if (lastMsg && lastMsg.sender === "bot") {
-          setMessages((current) => [
-            ...current,
-            { role: "assistant", content: lastMsg.content },
-          ]);
+          // Check if the backend returned the "syncing" fallback message
+          if (lastMsg.content.includes("direct pipeline is syncing")) {
+            console.warn("[Chatbot] Backend AI is syncing. Forcing frontend fallback.");
+          } else {
+            setMessages((current) => [
+              ...current,
+              { role: "assistant", content: lastMsg.content },
+            ]);
+            setLoading(false);
+            return;
+          }
         }
-      } else {
+      } else if (error) {
+        console.warn("[Chatbot] Supabase function error:", error);
+      }
+      
+      // 2. Fallback: Call Gemini Directly
+      console.log("[Chatbot] Calling direct Gemini AI via fetch...");
+      
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      
+      if (!apiKey || apiKey === "undefined" || apiKey === "") {
+        console.error("[Chatbot] ERROR: VITE_GEMINI_API_KEY is missing or invalid.");
         setMessages((current) => [
           ...current,
-          { role: "assistant", content: copy.error },
+          { role: "assistant", content: "Configuration Error: API Key is missing. Please check Vercel settings and REDEPLOY." },
         ]);
+        setLoading(false);
+        return;
       }
-    } catch {
+
+      // Build a mini-knowledge base from the products prop
+      const productContext = products && products.length > 0 
+        ? `Here are our products:\n${products.map(p => `- ${p.name} (ID: ${p.id}): ${p.price} MMK (${p.stock} left). ${p.description}`).join("\n")}`
+        : "We are currently updating our product catalog.";
+
+      const systemPrompt = `You are "Candy", a sweet, charming, and professional AI assistant for the shop "${businessName}". 
+      You speak a mix of Myanmar (Burmese) and English (soft and polite).
+      
+      SHOP CONTEXT:
+      ${productContext}
+      
+      CUSTOMER STATE:
+      - Current Cart: ${JSON.stringify(cart)}
+      - Current Total: ${cartTotal} MMK
+      - Step: ${currentStep}
+      
+      INSTRUCTIONS:
+      1. If the customer wants to buy/add a product, reply with your charming text AND include a special tag: [ACTION:ADD, ID:product_id]. 
+      2. If they ask about total/checkout, reply with the total AND tag: [ACTION:CHECKOUT].
+      3. Be extremely polite (use particles like "shin"). Keep replies concise.
+      
+      Customer asked: ${trimmed}
+      Candy's reply:`;
+
+      try {
+        console.log("[Chatbot] Sending fetch request to Gemini 3.1 Flash-Lite (v1)...");
+        // Using the latest Gemini 3.1 Flash-Lite model (GA as of May 2026)
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1/models/gemini-3.1-flash-lite:generateContent?key=${apiKey.trim()}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: systemPrompt }] }]
+          })
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
+          console.error("[Chatbot API Error Details]", errorData);
+          throw new Error(errorData.error?.message || `HTTP error ${response.status}`);
+        }
+
+        const resData = await response.json();
+        const botText = resData.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        if (!botText) throw new Error("Empty response from Gemini API");
+
+        // Parse actions logic
+        const actionMatch = botText.match(/\[ACTION:(.+?)\]/);
+        if (actionMatch) {
+          const actionStr = actionMatch[1];
+          if (actionStr.startsWith("ADD, ID:")) {
+            const prodId = actionStr.split("ID:")[1].trim();
+            setCart(curr => {
+              const existing = curr.find(c => c.productId === prodId);
+              if (existing) return curr.map(c => c.productId === prodId ? { ...c, quantity: c.quantity + 1 } : c);
+              return [...curr, { productId: prodId, quantity: 1 }];
+            });
+          } else if (actionStr === "CHECKOUT") {
+            setCurrentStep("checkout");
+          }
+        }
+
+        const cleanText = botText.replace(/\[ACTION:.+?\]/g, "").trim();
+        setMessages((current) => [...current, { role: "assistant", content: cleanText }]);
+      } catch (innerErr: any) {
+        console.error("[Chatbot Gemini Fetch Error]", innerErr);
+        let msg = "AI Error: ";
+        if (innerErr.message?.includes("Failed to fetch")) msg += "Network blocked. Check VPN or Region restrictions.";
+        else msg += (innerErr.message || "Unknown error");
+        setMessages((current) => [...current, { role: "assistant", content: msg }]);
+      }
+    } catch (err: any) {
+      console.error("[Chatbot Fatal Error]", err);
       setMessages((current) => [
         ...current,
-        { role: "assistant", content: copy.connectionError },
+        { role: "assistant", content: `Error: ${err.message || "Could not connect to AI"}. Please try again.` },
       ]);
     } finally {
       setLoading(false);

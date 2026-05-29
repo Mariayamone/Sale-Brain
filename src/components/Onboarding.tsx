@@ -35,7 +35,7 @@ export function Onboarding({
   const [saving, setSaving] = useState(false);
   const [generatedShopId, setGeneratedShopId] = useState<string>("");
   const [copied, setCopied] = useState(false);
-  
+
   const [formData, setFormData] = useState({
     business_name: initialShopName || "",
     business_category: "",
@@ -121,7 +121,20 @@ export function Onboarding({
     setSaving(true);
     setStep(4);
 
-    const shopId = generateShopId();
+    // Reuse existing shop_id if available to prevent link changes
+    let shopId = "";
+    const { data: existing } = await supabase
+      .from('business_onboarding')
+      .select('shop_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (existing?.shop_id) {
+      shopId = existing.shop_id;
+    } else {
+      shopId = generateShopId();
+    }
+
     setGeneratedShopId(shopId);
 
     const onboardingData: BusinessOnboarding = {
@@ -168,7 +181,7 @@ export function Onboarding({
   const handleComplete = () => {
     if (!user) return;
     const aiSummary = `Business Profile Saved! Based on your goal of ${formData.business_goal} and ${formData.bot_personality} personality, Sales Brain AI is now optimized for your ${formData.business_category} store.`;
-    
+
     onComplete({
       shopName: formData.business_name,
       ownerName: user.email?.split('@')[0] || "Owner",
@@ -220,18 +233,16 @@ export function Onboarding({
               <button
                 type="button"
                 onClick={() => onLangChange?.("en")}
-                className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${
-                  lang === "en" ? "bg-black text-white" : "text-slate-500"
-                }`}
+                className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${lang === "en" ? "bg-black text-white" : "text-slate-500"
+                  }`}
               >
                 EN
               </button>
               <button
                 type="button"
                 onClick={() => onLangChange?.("my")}
-                className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${
-                  lang === "my" ? "bg-black text-white" : "text-slate-500"
-                }`}
+                className={`px-2 py-0.5 text-[8px] font-bold rounded-md transition-all ${lang === "my" ? "bg-black text-white" : "text-slate-500"
+                  }`}
               >
                 မြန်မာ
               </button>
@@ -395,14 +406,14 @@ export function Onboarding({
                 <div className="w-20 h-20 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600">
                   <Check size={40} />
                 </div>
-                
+
                 <div className="space-y-3">
                   <h2 className="text-2xl font-extrabold text-slate-800">
                     {lang === "my" ? "အချက်အလက်များ အောင်မြင်စွာ သိမ်းဆည်းပြီးပါပြီ" : "Your Shop is Ready!"}
                   </h2>
                   <p className="text-sm text-slate-500 max-w-md mx-auto leading-relaxed">
-                    {lang === "my" 
-                      ? "သင်၏ အွန်လိုင်းအရောင်းဆိုင်အတွက် အေအိုင်စနစ်ကို အောင်မြင်စွာ ပြင်ဆင်ပြီးပါပြီ။ အောက်ပါလင့်ခ်ကို အသုံးပြု၍ သင်၏ ဆိုင်ကို ဝင်ရောက်ကြည့်ရှုနိုင်ပါသည်။" 
+                    {lang === "my"
+                      ? "သင်၏ အွန်လိုင်းအရောင်းဆိုင်အတွက် အေအိုင်စနစ်ကို အောင်မြင်စွာ ပြင်ဆင်ပြီးပါပြီ။ အောက်ပါလင့်ခ်ကို အသုံးပြု၍ သင်၏ ဆိုင်ကို ဝင်ရောက်ကြည့်ရှုနိုင်ပါသည်။"
                       : "We've generated a unique link for your shop. You can use this link to access your store or share it with your customers."}
                   </p>
                 </div>
@@ -417,11 +428,10 @@ export function Onboarding({
                     </div>
                     <button
                       onClick={copyToClipboard}
-                      className={`px-4 rounded-xl border transition-all flex items-center justify-center gap-2 text-xs font-bold cursor-pointer ${
-                        copied 
-                          ? "bg-emerald-50 border-emerald-200 text-emerald-600" 
+                      className={`px-4 rounded-xl border transition-all flex items-center justify-center gap-2 text-xs font-bold cursor-pointer ${copied
+                          ? "bg-emerald-50 border-emerald-200 text-emerald-600"
                           : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
-                      }`}
+                        }`}
                     >
                       {copied ? <Check size={14} /> : <Copy size={14} />}
                       <span>{copied ? (lang === "my" ? "ကူးယူပြီး" : "Copied") : (lang === "my" ? "ကူးမည်" : "Copy")}</span>
@@ -472,11 +482,10 @@ export function Onboarding({
                     setStep((prev) => (prev + 1) as any);
                   }
                 }}
-                className={`px-6 py-2.5 rounded-xl text-xs font-semibold text-white transition-all transform hover:scale-[1.01] active:scale-[0.99] cursor-pointer flex items-center gap-1.5 ${
-                  isStepValid()
+                className={`px-6 py-2.5 rounded-xl text-xs font-semibold text-white transition-all transform hover:scale-[1.01] active:scale-[0.99] cursor-pointer flex items-center gap-1.5 ${isStepValid()
                     ? "bg-black hover:bg-slate-800 shadow-sm"
                     : "bg-slate-200 text-slate-400 cursor-not-allowed"
-                }`}
+                  }`}
               >
                 <span>{step === 3 ? (lang === "my" ? "သိမ်းဆည်းမည်" : "Finish & Save") : (lang === "my" ? "ရှေ့သို့" : "Next")}</span>
                 <ArrowRight size={12} />

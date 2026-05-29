@@ -2,7 +2,7 @@ import { GoogleGenAI } from "npm:@google/genai@2.4.0";
 
 let client: GoogleGenAI | null = null;
 
-const DEFAULT_EMBEDDING_MODEL = "text-embedding-004";
+const DEFAULT_EMBEDDING_MODEL = "embedding-001";
 
 export function getGeminiClient(): GoogleGenAI {
   if (!client) {

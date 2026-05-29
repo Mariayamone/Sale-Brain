@@ -32,6 +32,11 @@ import { CustomChart } from "./components/CustomChart";
 import { TelegramSimulator } from "./components/TelegramSimulator";
 import { SmartMarketing } from "./components/SmartMarketing";
 import { Onboarding } from "./components/Onboarding";
+import { LandingPage } from "./components/LandingPage";
+import { AuthPage } from "./components/auth/AuthPage";
+import { useAuth } from "./contexts/AuthContext";
+import { invokeApi } from "./services/api";
+import { getShopState, saveShopState } from "./services/shopState";
 import { Product, DeliveryZone, Order, ShopConfig, TelegramSession, SystemState } from "./types";
 import * as store from "./services/clientStore";
 
@@ -290,7 +295,9 @@ const dict = {
 };
 
 export default function App() {
+  const { user, loading: authLoading, signOut } = useAuth();
   const [lang, setLang] = useState<"en" | "my">("en");
+  const [showLandingPage, setShowLandingPage] = useState<boolean>(true);
   const [showSimulator, setShowSimulator] = useState<boolean>(false);
 
   // Helper dictionary access
@@ -301,6 +308,7 @@ export default function App() {
   // Main Store State
   const [storeState, setStoreState] = useState<SystemState | null>(null);
   const [activeTab, setActiveTab] = useState<"orders" | "products" | "delivery" | "insights" | "bot_config" | "live_support" | "smart_marketing">("orders");
+  const [botConnectionTab, setBotConnectionTab] = useState<"messenger" | "telegram">("messenger");
   const [activeSessionId, setActiveSessionId] = useState<string>("default_customer");
 
   // Loaders
@@ -335,11 +343,17 @@ export default function App() {
   const [ownerReplyText, setOwnerReplyText] = useState<string>("");
   const [activeVerificationReceipt, setActiveVerificationReceipt] = useState<Order | null>(null);
 
+  // Fetch shop state from Supabase Storage
   const fetchState = async (silent = false) => {
+    if (!user) return;
     if (!silent) setLoading(true);
     try {
-      const data = store.getState();
+      const data = await getShopState(user.id);
       setStoreState(data);
+      setConfigDraft((prev) => {
+        if (activeTab === "bot_config" && prev) return prev;
+        return data.config;
+      });
       if (data.sessions && Object.keys(data.sessions).length > 0) {
         const keys = Object.keys(data.sessions);
         if (!keys.includes(activeSessionId)) {
@@ -353,17 +367,46 @@ export default function App() {
     }
   };
 
+  const persistState = async (next: SystemState) => {
+    if (!user) return;
+    await saveShopState(user.id, next);
+    setStoreState(next);
+  };
+
+  const fetchMessengerStatus = async () => {
+    setLoadingMessengerStatus(true);
+    try {
+      const data = await invokeApi<{ connected: boolean; pages: unknown[] }>("messenger/status");
+      setMessengerStatus(data);
+    } catch {
+      setMessengerStatus(null);
+    } finally {
+      setLoadingMessengerStatus(false);
+    }
+  };
+
   // Run initial state loading and setup periodic fast poll to grab customer simulator inputs immediately!
   useEffect(() => {
+    if (!user) return;
     fetchState();
 
-    // High frequency interval to handle real-time simulation updates
     const interval = setInterval(() => {
       fetchState(true);
     }, 4500);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [user?.id]);
+
+  // Ensure the bot-config form keeps a stable draft while typing
+  useEffect(() => {
+    if (!storeState) return;
+    if (activeTab === "bot_config") {
+      setConfigDraft((prev) => prev ?? storeState.config);
+      if (botConnectionTab === "messenger") {
+        fetchMessengerStatus();
+      }
+    }
+  }, [activeTab, storeState, botConnectionTab]);
 
   // Fetch AI strategy when the selected language changes
   useEffect(() => {
@@ -397,14 +440,22 @@ export default function App() {
     if (!storeState) return;
     setSavingAction(true);
     try {
-      store.saveOnboarding(storeState.config);
-      showToast(
-        lang === "my"
-          ? "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီးပါပြီ။ 🟢"
-          : "Online Shop Settings saved successfully. 🟢",
-        "success"
-      );
-      fetchState();
+      const data = await invokeApi<{ config?: ShopConfig }>("onboarding", {
+        ...(configDraft || storeState.config),
+      });
+      if (data?.config) {
+        setStoreState((prev) => (prev ? { ...prev, config: data.config! } : prev));
+        setConfigDraft(data.config);
+      }
+      {
+        showToast(
+          lang === "my" 
+            ? "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီး တယ်လီဂရမ်နှင့် ချိတ်ဆက်ပြီးပါပြီ။ 🟢" 
+            : "Online Shop Settings configured! Telegram Bot activated. 🟢",
+          "success"
+        );
+        fetchState();
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -420,15 +471,17 @@ export default function App() {
     
     if (window.confirm(confirmationMsg)) {
       try {
-        store.resetState();
-        showToast(
-          lang === "my"
-            ? "စမ်းသပ်မှုစနစ်အား မူလပထမ ပုသိမ်ဟလာဝါအရောင်းဆိုင်ပုံစံ ပြန်လည်သတ်မှတ်ပြီးပါပြီ။"
-            : "Platform state successfully refreshed to original Pathein Store data.",
-          "success"
-        );
-        fetchState();
-        fetchAiStrategy();
+        await invokeApi("reset");
+        {
+          showToast(
+            lang === "my"
+              ? "စမ်းသပ်မှုစနစ်အား မူလပထမ ပုသိမ်ဟလာဝါအရောင်းဆိုင်ပုံစံ ပြန်လည်သတ်မှတ်ပြီးပါပြီ။"
+              : "Platform state successfully refreshed to original Pathein Store data.",
+            "success"
+          );
+          fetchState();
+          fetchAiStrategy();
+        }
       } catch (err) {
         console.error(err);
       }
@@ -441,17 +494,44 @@ export default function App() {
     setSavingAction(true);
     try {
       const isEdit = !!editingProduct;
-      store.mutateProducts(isEdit ? "edit" : "add", isEdit ? { ...editingProduct, ...prodForm } : prodForm);
-      showToast(
-        isEdit
-          ? (lang === "my" ? "ကုန်ပစ္စည်းအချက်အလက် ပြင်ဆင်မှု ပြီးမြောက်ပါပြီ။" : "Product information updated successfully!")
-          : (lang === "my" ? "ပစ္စည်းအသစ် ကတ်တလောက်ထဲ ထည့်သွင်းပြီးပါပြီ။" : "Added premium product to store catalog!"),
-        "success"
-      );
-      setShowProductModal(false);
-      setEditingProduct(null);
-      setProdForm({ name: "", category: "Desserts", price: 4500, description: "", stock: 25, image: "" });
-      fetchState();
+      if (!storeState || !user) return;
+      const next = { ...storeState };
+      if (isEdit && editingProduct) {
+        next.products = next.products.map((p) =>
+          p.id === editingProduct.id
+            ? {
+                ...editingProduct,
+                ...prodForm,
+                price: Number(prodForm.price) || 0,
+                stock: Number(prodForm.stock) || 0,
+              }
+            : p
+        );
+      } else {
+        next.products.push({
+          ...prodForm,
+          id: `prod-${Date.now()}`,
+          price: Number(prodForm.price) || 0,
+          stock: Number(prodForm.stock) || 0,
+          image:
+            prodForm.image ||
+            "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=400",
+        });
+      }
+      await persistState(next);
+      {
+        showToast(
+          isEdit 
+            ? (lang === "my" ? "ကုန်ပစ္စည်းအချက်အလက် ပြင်ဆင်မှု ပြီးမြောက်ပါပြီ။" : "Product information updated successfully!")
+            : (lang === "my" ? "ပစ္စည်းအသစ် ကတ်တလောက်ထဲ ထည့်သွင်းပြီးပါပြီ။" : "Added premium product to store catalog!"),
+          "success"
+        );
+        setShowProductModal(false);
+        setEditingProduct(null);
+        // Clear form
+        setProdForm({ name: "", category: "Desserts", price: 4500, description: "", stock: 25, image: "" });
+        fetchState();
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -466,9 +546,13 @@ export default function App() {
 
     if (confirm(confirmMsg)) {
       try {
-        store.mutateProducts("delete", prod);
+        if (!storeState || !user) return;
+        const next = {
+          ...storeState,
+          products: storeState.products.filter((p) => p.id !== prod.id),
+        };
+        await persistState(next);
         showToast(lang === "my" ? "ကုန်ပစ္စည်း ဖျက်ပြီးပါပြီ။" : "Product deleted successfully.", "success");
-        fetchState();
       } catch (err) {
         console.error(err);
       }
@@ -479,15 +563,29 @@ export default function App() {
   const handleAddZone = async () => {
     if (!newZone.township.trim()) return;
     try {
-      store.mutateDeliveryZone("add", { zone: newZone });
-      showToast(
-        lang === "my"
-          ? `${newZone.township} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။`
-          : `Added township rate mapping for: ${newZone.township}`,
-        "success"
-      );
-      setNewZone({ township: "", rate: 2000, deliveryTime: "1-2 Days" });
-      fetchState();
+      if (!storeState || !user) return;
+      const next = {
+        ...storeState,
+        deliveryZones: [
+          ...storeState.deliveryZones,
+          {
+            township: newZone.township,
+            rate: Number(newZone.rate) || 0,
+            deliveryTime: newZone.deliveryTime || "1-2 Days",
+          },
+        ],
+      };
+      await persistState(next);
+      {
+        showToast(
+          lang === "my" 
+            ? `${newZone.township} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။` 
+            : `Added township rate mapping for: ${newZone.township}`, 
+          "success"
+        );
+        setNewZone({ township: "", rate: 2000, deliveryTime: "1-2 Days" });
+        fetchState();
+      }
     } catch (err) {
       console.error(err);
     }
@@ -495,14 +593,19 @@ export default function App() {
 
   const handleDeleteZone = async (idx: number, name: string) => {
     try {
-      store.mutateDeliveryZone("delete", { index: idx });
-      showToast(
-        lang === "my"
-          ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
-          : `Removed township shipping rule: ${name}`,
-        "info"
-      );
-      fetchState();
+      if (!storeState || !user) return;
+      const zones = [...storeState.deliveryZones];
+      zones.splice(idx, 1);
+      await persistState({ ...storeState, deliveryZones: zones });
+      {
+        showToast(
+          lang === "my"
+            ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
+            : `Removed township shipping rule: ${name}`,
+          "info"
+        );
+        fetchState();
+      }
     } catch (err) {
       console.error(err);
     }
@@ -511,15 +614,17 @@ export default function App() {
   // Order payment screenshot evaluation trigger (Accept / Cancel)
   const handleUpdateOrderStatus = async (orderId: string, status: 'confirmed' | 'cancelled' | 'completed') => {
     try {
-      store.updateOrderStatus(orderId, status);
-      showToast(
-        lang === "my"
-          ? `အော်ဒါ အခြေအနေကို [${status.toUpperCase()}] သို့ ပြောင်းလဲလိုက်ပါပြီ။`
-          : `Order status marked as [${status.toUpperCase()}]!`,
-        "success"
-      );
-      setActiveVerificationReceipt(null);
-      fetchState();
+      await invokeApi("orders/update", { orderId, status });
+      {
+        showToast(
+          lang === "my"
+            ? `အော်ဒါ အခြေအနေကို [${status.toUpperCase()}] သို့ ပြောင်းလဲလိုက်ပါပြီ။ ဘောက်ချာပေးပို့လိုက်ပါသည်။`
+            : `Order status marked as [${status.toUpperCase()}]! Invoice sent.`,
+          "success"
+        );
+        setActiveVerificationReceipt(null);
+        fetchState();
+      }
     } catch (err) {
       console.error(err);
     }
@@ -527,14 +632,16 @@ export default function App() {
 
   const handleTakeover = async (sessId: string) => {
     try {
-      store.botTakeover(sessId);
-      showToast(
-        lang === "my"
-          ? "🔴 AI ဘော့တ်ကို ပိတ်လိုက်ပါပြီ။ ဆိုင်ရှင်တိုက်ရိုက်ဖြေကြားနေပါသည်။"
-          : "🔴 Bot deactivated. Owner intervention launched! Live chat active.",
-        "info"
-      );
-      fetchState();
+      await invokeApi("bot/takeover", { sessionId: sessId });
+      {
+        showToast(
+          lang === "my"
+            ? "🔴 AI ဘော့တ်ကို ပိတ်လိုက်ပါပြီ။ ဆိုင်ရှင်တိုက်ရိုက်ဖြေကြားနေပါသည်။"
+            : "🔴 Bot deactivated. Owner intervention launched! Live chat active.",
+          "info"
+        );
+        fetchState();
+      }
     } catch (err) {
       console.error(err);
     }
@@ -542,14 +649,16 @@ export default function App() {
 
   const handleReleaseToAi = async (sessId: string) => {
     try {
-      store.botRelease(sessId);
-      showToast(
-        lang === "my"
-          ? "🟢 AI ဘော့တ်ကို ပြန်လည်ဖွင့်လိုက်ပါပြီ။ ဘော့တ်မှ ဆက်လက်ဖြေကြားပါမည်။"
-          : "🟢 Bot reactivated. Candy taking over.",
-        "success"
-      );
-      fetchState();
+      await invokeApi("bot/release", { sessionId: sessId });
+      {
+        showToast(
+          lang === "my"
+            ? "🟢 AI ဘော့တ်ကို ပြန်လည်ဖွင့်လိုက်ပါပြီ။ ဘော့တ်မှ ဆက်လက်ဖြေကြားပါမည်။"
+            : "🟢 Bot reactivated. Candy taking over.",
+          "success"
+        );
+        fetchState();
+      }
     } catch (err) {
       console.error(err);
     }
@@ -559,7 +668,7 @@ export default function App() {
     e.preventDefault();
     if (!ownerReplyText.trim()) return;
     try {
-      store.botOwnerReply(activeSessionId, ownerReplyText);
+      await invokeApi("bot/owner-reply", { sessionId: activeSessionId, content: ownerReplyText });
       setOwnerReplyText("");
       fetchState();
     } catch (err) {
@@ -595,6 +704,22 @@ export default function App() {
       "success"
     );
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#070f21] text-slate-100 flex flex-col justify-center items-center font-sans">
+        <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <AuthPage />;
+  }
+
+  if (showLandingPage) {
+    return <LandingPage onEnter={() => setShowLandingPage(false)} />;
+  }
 
   if (loading || !storeState) {
     return (
@@ -635,12 +760,13 @@ export default function App() {
 
           // Persist settings to backing JSON state
           try {
-            store.saveOnboarding({
+            await invokeApi("onboarding", {
               ...storeState.config,
               shopName: profile.shopName,
               ownerName: profile.ownerName,
               onboardingCompleted: true,
             });
+            await persistState(updatedState);
             showToast(
               lang === "my"
                 ? "အချက်အလက် စနစ်သိမ်းဆည်းအောင်မြင်ပြီး လုပ်ငန်းဒိုင်ယာလော့ခ် ဖွင့်လှစ်ပါပြီ။ 🟢"
@@ -732,15 +858,27 @@ export default function App() {
                 }
               }));
               // Synchronously tell backend to set onboardingCompleted to false so poller doesn't override
-              store.saveOnboarding({
-                ...storeState.config,
-                onboardingCompleted: false,
-              });
+              try {
+                await invokeApi("onboarding", {
+                  ...storeState.config,
+                  onboardingCompleted: false,
+                });
+              } catch (e) {
+                console.warn("Could not save onboarding state:", e);
+              }
             }}
             className="flex items-center gap-1.5 text-[9px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-1.5 px-3 rounded-lg border border-indigo-200 transition-colors cursor-pointer"
           >
             <Edit2 size={11} className="text-indigo-600 animate-pulse" />
             <span>{t("editBusinessProfile")}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => signOut()}
+            className="text-[9px] font-bold text-slate-500 hover:text-rose-600 px-2 py-1 rounded-lg border border-slate-200"
+          >
+            Sign out
           </button>
 
           {/* Fully custom Burmese - English switch button */}
@@ -1018,7 +1156,7 @@ export default function App() {
                               </td>
                               <td className="p-3 font-sans text-[10px] text-slate-500 leading-tight">
                                 <span className="font-medium text-slate-700 block">{o.township}</span>
-                                <span className="text-[9px] text-slate-400 line-clamp-1">{o.addressDetails}</span>
+                                <span className="text-[9px] text-slate-400 line-clamp-1">{o.addressDetails || o.township}</span>
                               </td>
                               <td className="p-3">
                                 <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${

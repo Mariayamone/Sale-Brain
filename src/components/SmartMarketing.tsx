@@ -323,7 +323,7 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
     try {
       const data = getAiMarketingInsights(campaign, selectedProductIds);
       if (data.success && data.insights) {
-        setInsights(data.insights);
+        setInsights(data.insights as unknown as MarketingInsights);
         // Prepopulate text poster configurations based on AI descriptions
         const rec = data.insights.recommendations[0];
         if (rec) {

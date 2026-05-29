@@ -94,14 +94,16 @@ export function mutateDeliveryZone(
   action: string,
   payload: { zone?: { township: string; rate: number; deliveryTime: string }; index?: number }
 ) {
-  const state = load();
-  if (action === "add" && payload.zone) {
-    state.deliveryZones.push(payload.zone);
-  } else if (action === "delete" && payload.index !== undefined) {
-    state.deliveryZones.splice(payload.index, 1);
-  }
-  save();
-  return state;
+  // Deprecated: Delivery zones now managed via API
+  // const state = load();
+  // if (action === "add" && payload.zone) {
+  //   state.deliveryZones.push(payload.zone);
+  // } else if (action === "delete" && payload.index !== undefined) {
+  //   state.deliveryZones.splice(payload.index, 1);
+  // }
+  // save();
+  // return state;
+  return load();
 }
 
 export function updateOrderStatus(orderId: string, status: "confirmed" | "cancelled" | "completed") {

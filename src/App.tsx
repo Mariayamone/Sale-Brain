@@ -37,9 +37,16 @@ import { AuthPage } from "./components/auth/AuthPage";
 import { useAuth } from "./contexts/AuthContext";
 import { invokeApi } from "./services/api";
 import { getShopState, saveShopState } from "./services/shopState";
+import {
+  emptyOnboardingForm,
+  getShopForOwner,
+  shopRecordToFormData,
+} from "./services/shopRecord";
+import type { OnboardingFormState, ShopRecord } from "./types";
 import { Product, DeliveryZone, Order, ShopConfig, TelegramSession, SystemState } from "./types";
 import * as store from "./services/clientStore";
 import { supabase } from "./utils/supabase";
+import { fetchDeliveryMatrix, addDeliveryZone, deleteDeliveryZone } from "./services/deliveryMatrixApi";
 
 // Complete localized dictionary for total English & Burmese translation sync
 const dict = {
@@ -313,6 +320,8 @@ export default function App() {
   const [activeSessionId, setActiveSessionId] = useState<string>("default_customer");
 
   // Onboarding / Config Draft state
+  const [shopRecord, setShopRecord] = useState<ShopRecord | null>(null);
+  const [editingOnboarding, setEditingOnboarding] = useState(false);
   const [configDraft, setConfigDraft] = useState<ShopConfig | null>(null);
   const [messengerStatus, setMessengerStatus] = useState<{ connected: boolean; pages: any[] } | null>(null);
   const [loadingMessengerStatus, setLoadingMessengerStatus] = useState<boolean>(false);
@@ -326,7 +335,7 @@ export default function App() {
   // Forms / Input Dialogs State
   const [showProductModal, setShowProductModal] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [showNotification, setShowNotification] = useState<{ text: string; type: "success" | "info" } | null>(null);
+  const [showNotification, setShowNotification] = useState<{ text: string; type: "success" | "info" | "error" } | null>(null);
 
   // New Product Form state
   const [prodForm, setProdForm] = useState({
@@ -340,9 +349,25 @@ export default function App() {
 
   // New Zone Form state
   const [newZone, setNewZone] = useState({
-    township: "",
+    township_name: "",
+    region: "",
+    division: "",
     rate: 2000,
-    deliveryTime: "1-2 Days"
+    estimated_transit_timeline: "1-2 Days"
+  });
+
+  // Delivery zones from API
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
+  const [deliveryZonesLoading, setDeliveryZonesLoading] = useState(false);
+  const [deliveryZonesPage, setDeliveryZonesPage] = useState(1);
+  const [deliveryZonesSearch, setDeliveryZonesSearch] = useState("");
+  const [deliveryZonesPagination, setDeliveryZonesPagination] = useState({
+    total_records: 0,
+    current_page: 1,
+    limit: 10,
+    total_pages: 0,
+    has_next: false,
+    has_prev: false
   });
 
   // Owner custom live reply states
@@ -357,26 +382,23 @@ export default function App() {
       // 1. Fetch JSON state from storage
       const data = await getShopState(user.id);
       
-      // 2. Fetch onboarding data from DB (Source of Truth for completion)
-      // Use ordering by onboarding_id desc to get the most recent record if duplicates exist
-      const { data: onboardingData, error: dbError } = await supabase
-        .from('business_onboarding')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('onboarding_id', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      
-      if (dbError) {
-        console.warn("Database fetch error:", dbError);
-      }
-
-      if (onboardingData) {
-        // Sync completion status and business name from DB to the state object
-        data.config.onboardingCompleted = onboardingData.onboarding_completed;
-        if (onboardingData.business_name) {
-          data.config.shopName = onboardingData.business_name;
+      // 2. Sync shop row from Postgres (source of truth for onboarding)
+      try {
+        const shopRow = await getShopForOwner(user.id);
+        if (shopRow) {
+          setShopRecord(shopRow);
+          data.config.onboardingCompleted = shopRow.onboarding_completed;
+          if (shopRow.shop_name) {
+            data.config.shopName = shopRow.shop_name;
+          }
+          if (shopRow.owner_name) {
+            data.config.ownerName = shopRow.owner_name;
+          }
+        } else {
+          setShopRecord(null);
         }
+      } catch (dbError) {
+        console.warn("Shop fetch error:", dbError);
       }
 
       // 3. Update states ONLY after all sync logic is done
@@ -417,6 +439,25 @@ export default function App() {
     }
   };
 
+  const fetchDeliveryZonesFromApi = async () => {
+    setDeliveryZonesLoading(true);
+    try {
+      const result = await fetchDeliveryMatrix(deliveryZonesPage, 10, deliveryZonesSearch);
+      setDeliveryZones(result.data);
+      setDeliveryZonesPagination(result.pagination);
+    } catch (err) {
+      console.error("Failed to fetch delivery zones:", err);
+      showToast(
+        lang === "my" 
+          ? "ပို့ဆောင်ခ အချက်အလက်များ ရယူ၍မရပါ" 
+          : "Failed to load delivery zones", 
+        "error"
+      );
+    } finally {
+      setDeliveryZonesLoading(false);
+    }
+  };
+
   // Run initial state loading and setup periodic fast poll to grab customer simulator inputs immediately!
   useEffect(() => {
     if (!user) return;
@@ -440,13 +481,20 @@ export default function App() {
     }
   }, [activeTab, storeState, botConnectionTab]);
 
+  // Fetch delivery zones when tab, page or search changes
+  useEffect(() => {
+    if (activeTab === "delivery") {
+      fetchDeliveryZonesFromApi();
+    }
+  }, [activeTab, deliveryZonesPage, deliveryZonesSearch]);
+
   // Fetch AI strategy when the selected language changes
   useEffect(() => {
     fetchAiStrategy();
   }, [lang]);
 
   // Display toast alerts
-  const showToast = (text: string, type: "success" | "info" = "success") => {
+  const showToast = (text: string, type: "success" | "info" | "error" = "success") => {
     setShowNotification({ text, type });
     setTimeout(() => {
       setShowNotification(null);
@@ -593,53 +641,52 @@ export default function App() {
 
   // Delivery zone Matrix adjustments
   const handleAddZone = async () => {
-    if (!newZone.township.trim()) return;
+    if (!newZone.township_name.trim()) return;
     try {
-      if (!storeState || !user) return;
-      const next = {
-        ...storeState,
-        deliveryZones: [
-          ...storeState.deliveryZones,
-          {
-            township: newZone.township,
-            rate: Number(newZone.rate) || 0,
-            deliveryTime: newZone.deliveryTime || "1-2 Days",
-          },
-        ],
-      };
-      await persistState(next);
-      {
-        showToast(
-          lang === "my" 
-            ? `${newZone.township} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။` 
-            : `Added township rate mapping for: ${newZone.township}`, 
-          "success"
-        );
-        setNewZone({ township: "", rate: 2000, deliveryTime: "1-2 Days" });
-        fetchState();
-      }
+      await addDeliveryZone({
+        township_name: newZone.township_name,
+        region: newZone.region,
+        division: newZone.division,
+        rate: Number(newZone.rate) || 0,
+        estimated_transit_timeline: newZone.estimated_transit_timeline || "1-2 Days",
+      });
+      showToast(
+        lang === "my" 
+          ? `${newZone.township_name} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။` 
+          : `Added township rate mapping for: ${newZone.township_name}`, 
+        "success"
+      );
+      setNewZone({ township_name: "", region: "", division: "", rate: 2000, estimated_transit_timeline: "1-2 Days" });
+      fetchDeliveryZonesFromApi();
     } catch (err) {
       console.error(err);
+      showToast(
+        lang === "my" 
+          ? "ပို့ဆောင်ခ သတ်မှတ်၍မရပါ" 
+          : "Failed to add delivery zone", 
+        "error"
+      );
     }
   };
 
-  const handleDeleteZone = async (idx: number, name: string) => {
+  const handleDeleteZone = async (id: string, name: string) => {
     try {
-      if (!storeState || !user) return;
-      const zones = [...storeState.deliveryZones];
-      zones.splice(idx, 1);
-      await persistState({ ...storeState, deliveryZones: zones });
-      {
-        showToast(
-          lang === "my"
-            ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
-            : `Removed township shipping rule: ${name}`,
-          "info"
-        );
-        fetchState();
-      }
+      await deleteDeliveryZone(id);
+      showToast(
+        lang === "my"
+          ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
+          : `Removed township shipping rule: ${name}`,
+        "info"
+      );
+      fetchDeliveryZonesFromApi();
     } catch (err) {
       console.error(err);
+      showToast(
+        lang === "my"
+          ? "ပို့ဆောင်ခ ဖျက်၍မရပါ"
+          : "Failed to delete delivery zone",
+        "error"
+      );
     }
   };
 
@@ -771,67 +818,73 @@ export default function App() {
     );
   }
 
-  // Intercept workflow with Onboarding Screen
-  if (!storeState.config.onboardingCompleted) {
+  const onboardingInitialForm: OnboardingFormState = shopRecord
+    ? shopRecordToFormData(shopRecord)
+    : emptyOnboardingForm(storeState.config.shopName, storeState.config.ownerName);
+
+  const handleWizardComplete = async (
+    profile: { shopName: string; ownerName: string },
+    aiSummary: string,
+    wasEdit: boolean
+  ) => {
+    const updatedState = {
+      ...storeState,
+      config: {
+        ...storeState.config,
+        shopName: profile.shopName,
+        ownerName: profile.ownerName,
+        onboardingCompleted: true,
+      },
+    };
+    setStoreState(updatedState);
+    setAiAnalysisText(aiSummary);
+    setEditingOnboarding(false);
+
+    try {
+      await invokeApi("onboarding", {
+        ...storeState.config,
+        shopName: profile.shopName,
+        ownerName: profile.ownerName,
+        onboardingCompleted: true,
+      });
+      await saveShopState(user.id, updatedState);
+      showToast(
+        wasEdit
+          ? lang === "my"
+            ? "လုပ်ငန်းအချက်အလက် ပြင်ဆင်ပြီးပါပြီ။ 🟢"
+            : "Business profile updated successfully. 🟢"
+          : lang === "my"
+            ? "အချက်အလက် စနစ်သိမ်းဆည်းအောင်မြင်ပြီး လုပ်ငန်းဒိုင်ယာလော့ခ် ဖွင့်လှစ်ပါပြီ။ 🟢"
+            : "Setup completed! Welcome to your SME dashboard. 🟢",
+        "success"
+      );
+      await fetchState(true);
+    } catch (err) {
+      console.error("[App] Saving onboarding stats failed", err);
+      setStoreState(updatedState);
+    }
+  };
+
+  // First-time setup or edit profile from dashboard
+  if (!storeState.config.onboardingCompleted || editingOnboarding) {
     return (
       <Onboarding
+        key={editingOnboarding ? `edit-${shopRecord?.id ?? "shop"}` : "setup"}
         lang={lang}
-        initialShopName={storeState.config.shopName}
-        initialOwnerName={storeState.config.ownerName}
+        isEditMode={editingOnboarding}
+        initialFormData={onboardingInitialForm}
         onLangChange={setLang}
-        onComplete={async (profile, aiSummary) => {
-          // Instantly patch the frontend memory block for zero-delay entry feel
-          const updatedState = {
-            ...storeState,
-            config: {
-              ...storeState.config,
-              shopName: profile.shopName,
-              ownerName: profile.ownerName,
-              onboardingCompleted: true
-            }
-          };
-          setStoreState(updatedState);
-          setAiAnalysisText(aiSummary);
-
-          // Persist settings to backing JSON state
-          try {
-            // First, trigger backend onboarding (updates JSON + sets up Telegram)
-            await invokeApi("onboarding", {
-              ...storeState.config,
-              shopName: profile.shopName,
-              ownerName: profile.ownerName,
-              onboardingCompleted: true,
-            });
-            
-            // Second, save full state to storage
-            await saveShopState(user.id, updatedState);
-            
-            // Third, update local state
-            setStoreState(updatedState);
-            setAiAnalysisText(aiSummary);
-
-            showToast(
-              lang === "my"
-                ? "အချက်အလက် စနစ်သိမ်းဆည်းအောင်မြင်ပြီး လုပ်ငန်းဒိုင်ယာလော့ခ် ဖွင့်လှစ်ပါပြီ။ 🟢"
-                : "Setup Completed! Welcome to your SME dashboard dashboard. 🟢",
-              "success"
-            );
-            
-            // Finally, refresh state to ensure everything is in sync
-            await fetchState(true);
-          } catch (err) {
-            console.error("[App] Saving onboarding stats failed", err);
-            // Fallback: still set local state to allow entry if only persistence failed
-            setStoreState(updatedState);
-          }
-        }}
+        onCancelEdit={() => setEditingOnboarding(false)}
+        onComplete={(profile, aiSummary) =>
+          handleWizardComplete(profile, aiSummary, editingOnboarding)
+        }
       />
     );
   }
 
   // Derived dashboard analytics values
   const productsCount = storeState.products.length;
-  const deliveryZonesCount = storeState.deliveryZones.length;
+  const deliveryZonesCount = deliveryZones.length;
   const verifiedOrders = storeState.orders.filter(o => o.status === "confirmed" || o.status === "completed");
   const unverifiedPrepaysCount = storeState.orders.filter(o => o.status === "verifying" && o.paymentMethod === "prepay").length;
   const alertLowStock = storeState.products.filter(p => p.stock <= 5);
@@ -896,37 +949,26 @@ export default function App() {
           {/* Edit Business Profile / Onboarding Configuration Desk */}
           <button
             onClick={async () => {
-              const confirmMsg = lang === "my" 
-                ? "လုပ်ငန်းအချက်အလက်များကို ပြန်လည်ပြင်ဆင်လိုပါသလား?" 
+              const confirmMsg = lang === "my"
+                ? "လုပ်ငန်းအချက်အလက်များကို ပြန်လည်ပြင်ဆင်လိုပါသလား?"
                 : "Would you like to edit your business profile details?";
-              
+
               if (!window.confirm(confirmMsg)) return;
 
-              // 1. Update local state immediately
-              setStoreState((prev) => prev ? ({
-                ...prev,
-                config: {
-                  ...prev.config,
-                  onboardingCompleted: false
-                }
-              }) : null);
-
-              // 2. Update PostgreSQL (Source of Truth)
               try {
-                await supabase
-                  .from('business_onboarding')
-                  .update({ onboarding_completed: false })
-                  .eq('user_id', user.id);
-                
-                // 3. Update JSON storage
-                await invokeApi("onboarding", {
-                  ...storeState.config,
-                  onboardingCompleted: false,
-                });
-
-                showToast(lang === "my" ? "ပြင်ဆင်ရန် အဆင်သင့်ဖြစ်ပါပြီ။" : "Ready to edit profile.", "info");
+                const freshShop = await getShopForOwner(user.id);
+                if (freshShop) {
+                  setShopRecord(freshShop);
+                }
+                setEditingOnboarding(true);
               } catch (e) {
-                console.warn("Could not sync onboarding reset:", e);
+                console.warn("Could not load profile for edit:", e);
+                showToast(
+                  lang === "my"
+                    ? "အချက်အလက် ဖွင့်မရပါ။ ထပ်စမ်းကြည့်ပါ။"
+                    : "Could not load profile. Please try again.",
+                  "info"
+                );
               }
             }}
             className="flex items-center gap-1.5 text-[9px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-1.5 px-3 rounded-lg border border-indigo-200 transition-colors cursor-pointer"
@@ -1583,8 +1625,8 @@ export default function App() {
                     <label className="text-[9px] text-[#475569] block font-mono font-bold uppercase">{t("townshipNameLabel")}</label>
                     <input
                       type="text"
-                      value={newZone.township}
-                      onChange={(e) => setNewZone({ ...newZone, township: e.target.value })}
+                      value={newZone.township_name}
+                      onChange={(e) => setNewZone({ ...newZone, township_name: e.target.value })}
                       placeholder="e.g., Yankin, Tamwe, North Dagon"
                       className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-slate-800"
                     />
@@ -1609,6 +1651,20 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Search Input */}
+              <div className="bg-white border border-slate-200/60 p-4 rounded-2xl shadow-sm">
+                <input
+                  type="text"
+                  value={deliveryZonesSearch}
+                  onChange={(e) => {
+                    setDeliveryZonesSearch(e.target.value);
+                    setDeliveryZonesPage(1);
+                  }}
+                  placeholder={lang === "my" ? "မြို့နယ်အမည်ရှာရန်..." : "Search township name..."}
+                  className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-slate-800 text-xs"
+                />
+              </div>
+
               {/* Township list grid */}
               <div className="bg-white border border-slate-200/60 rounded-2xl overflow-hidden text-xs shadow-sm">
                 <table className="w-full text-left border-collapse">
@@ -1621,24 +1677,65 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white text-slate-600 font-mono">
-                    {storeState.deliveryZones.map((zone, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50/50 transition-all">
-                        <td className="p-3 font-bold text-slate-800">{zone.township}</td>
-                        <td className="p-3 text-emerald-600 font-bold">{zone.rate.toLocaleString()} MMK</td>
-                        <td className="p-3 text-slate-500">{zone.deliveryTime}</td>
-                        <td className="p-3 text-center">
-                          <button
-                            onClick={() => handleDeleteZone(idx, zone.township)}
-                            className="bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-[9px] px-2.5 py-1 rounded-md border border-rose-150 cursor-pointer"
-                          >
-                            {t("removeRule")}
-                          </button>
+                    {deliveryZonesLoading ? (
+                      <tr>
+                        <td colSpan={4} className="p-8 text-center text-slate-400">
+                          <RefreshCw size={16} className="animate-spin inline-block mr-2" />
+                          Loading...
                         </td>
                       </tr>
-                    ))}
+                    ) : deliveryZones.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="p-8 text-center text-slate-400">
+                          No delivery zones found
+                        </td>
+                      </tr>
+                    ) : (
+                      deliveryZones.map((zone) => (
+                        <tr key={zone.id} className="hover:bg-slate-50/50 transition-all">
+                          <td className="p-3 font-bold text-slate-800">{zone.township_name}</td>
+                          <td className="p-3 text-emerald-600 font-bold">{zone.rate.toLocaleString()} MMK</td>
+                          <td className="p-3 text-slate-500">{zone.estimated_transit_timeline}</td>
+                          <td className="p-3 text-center">
+                            <button
+                              onClick={() => handleDeleteZone(zone.id, zone.township_name)}
+                              className="bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-[9px] px-2.5 py-1 rounded-md border border-rose-150 cursor-pointer"
+                            >
+                              {t("removeRule")}
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
+
+              {/* Pagination Controls */}
+              {deliveryZonesPagination.total_pages > 1 && (
+                <div className="flex items-center justify-between bg-white border border-slate-200/60 rounded-2xl p-4 text-xs">
+                  <div className="text-slate-500 font-mono">
+                    Page {deliveryZonesPagination.current_page} of {deliveryZonesPagination.total_pages} 
+                    ({deliveryZonesPagination.total_records} total)
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setDeliveryZonesPage(p => p - 1)}
+                      disabled={!deliveryZonesPagination.has_prev}
+                      className="px-3 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-bold"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setDeliveryZonesPage(p => p + 1)}
+                      disabled={!deliveryZonesPagination.has_next}
+                      className="px-3 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-bold"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -2006,7 +2103,7 @@ export default function App() {
             <TelegramSimulator
               session={activeSession}
               products={storeState.products}
-              deliveryZones={storeState.deliveryZones}
+              deliveryZones={deliveryZones}
               onStateUpdated={() => fetchState(true)}
               onSendReply={async (text) => {
                 fetchState(true);

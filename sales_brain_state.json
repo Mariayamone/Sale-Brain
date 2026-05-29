@@ -59,43 +59,7 @@
       "image": "https://images.unsplash.com/photo-1587049352846-4a222e784d38?auto=format&fit=crop&q=80&w=400"
     }
   ],
-  "deliveryZones": [
-    {
-      "township": "Kamayut",
-      "rate": 3000,
-      "deliveryTime": "1-2 Days"
-    },
-    {
-      "township": "Sanchaung",
-      "rate": 2500,
-      "deliveryTime": "1-2 Days"
-    },
-    {
-      "township": "Latha (Downtown)",
-      "rate": 2000,
-      "deliveryTime": "1 Day"
-    },
-    {
-      "township": "Yankin",
-      "rate": 3000,
-      "deliveryTime": "1-2 Days"
-    },
-    {
-      "township": "Bahan",
-      "rate": 2500,
-      "deliveryTime": "1-2 Days"
-    },
-    {
-      "township": "Mayangone",
-      "rate": 3500,
-      "deliveryTime": "2 Days"
-    },
-    {
-      "township": "Hlaing",
-      "rate": 3000,
-      "deliveryTime": "1-2 Days"
-    }
-  ],
+  "deliveryZones": [],
   "orders": [
     {
       "id": "ord-1001",

@@ -294,7 +294,7 @@ export default function App() {
   const [showSimulator, setShowSimulator] = useState<boolean>(false);
 
   // Helper dictionary access
-  const t = (key: keyof typeof dict['en']) => {
+  const t = (key: keyof typeof dict['en']): any => {
     return dict[lang][key] || dict['en'][key];
   };
 
@@ -1018,7 +1018,7 @@ export default function App() {
                               </td>
                               <td className="p-3 font-sans text-[10px] text-slate-500 leading-tight">
                                 <span className="font-medium text-slate-700 block">{o.township}</span>
-                                <span className="text-[9px] text-slate-400 line-clamp-1">{o.shippingAddress}</span>
+                                <span className="text-[9px] text-slate-400 line-clamp-1">{o.addressDetails}</span>
                               </td>
                               <td className="p-3">
                                 <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${

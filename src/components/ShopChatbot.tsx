@@ -164,6 +164,7 @@ export function ShopChatbot({
 
     try {
       // 1. Try Supabase Edge Function first
+      console.log("[Chatbot] Attempting backend chat...");
       const { data, error } = await supabase.functions.invoke("shop", {
         body: {
           action: "chat",
@@ -179,7 +180,7 @@ export function ShopChatbot({
         if (lastMsg && lastMsg.sender === "bot") {
           // Check if the backend returned the "syncing" fallback message
           if (lastMsg.content.includes("direct pipeline is syncing")) {
-            console.log("[Chatbot] Backend AI is syncing/failed. Forcing frontend AI...");
+            console.warn("[Chatbot] Backend AI is syncing. Forcing frontend fallback.");
           } else {
             setMessages((current) => [
               ...current,
@@ -189,34 +190,46 @@ export function ShopChatbot({
             return;
           }
         }
+      } else if (error) {
+        console.warn("[Chatbot] Supabase function error:", error);
       }
       
-      // 2. Fallback: Call Gemini Directly if Supabase fails or is not deployed
-      console.log("[Chatbot] Falling back to direct Gemini AI...");
+      // 2. Fallback: Call Gemini Directly
+      console.log("[Chatbot] Calling direct Gemini AI...");
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      if (!apiKey) throw new Error("Missing VITE_GEMINI_API_KEY");
+      
+      if (!apiKey) {
+        console.error("[Chatbot] ERROR: VITE_GEMINI_API_KEY is missing in environment variables.");
+        setMessages((current) => [
+          ...current,
+          { role: "assistant", content: "Configuration Error: API Key missing. Please check Vercel settings." },
+        ]);
+        setLoading(false);
+        return;
+      }
 
       const genAI = new GoogleGenAI(apiKey);
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
       
-      const systemPrompt = `You are "Candy", a sweet and helpful AI assistant for "${businessName}".
-      Speak in a mix of polite Myanmar/Burmese and English. 
-      Answer this customer question: ${trimmed}
-      Keep it short, charming, and focused on helping them shop.`;
+      const systemPrompt = `You are "Candy", a sweet and professional AI assistant for the shop "${businessName}". 
+      You speak a mix of Myanmar (Burmese) and English. 
+      Customer asked: ${trimmed}
+      Reply charmingly and helpfully. Keep it short.`;
 
       const result = await model.generateContent(systemPrompt);
-      const response = await result.response;
-      const botText = response.text();
+      const botText = result.response.text();
+
+      if (!botText) throw new Error("Empty response from Gemini");
 
       setMessages((current) => [
         ...current,
         { role: "assistant", content: botText },
       ]);
-    } catch (err) {
-      console.error("[Chatbot Error]", err);
+    } catch (err: any) {
+      console.error("[Chatbot Fatal Error]", err);
       setMessages((current) => [
         ...current,
-        { role: "assistant", content: copy.error },
+        { role: "assistant", content: `Error: ${err.message || "Could not connect to AI"}. Please try again.` },
       ]);
     } finally {
       setLoading(false);

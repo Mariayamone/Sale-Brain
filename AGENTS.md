@@ -1,13 +1,13 @@
 # AI Agent Instructions for Sales Brain AI Workspace
 
 ## Project Overview
-This repository contains "Sales Brain AI" - a full-stack JavaScript application leveraging a Vite + React (TypeScript) frontend and an Express/Node.js backend (`server.ts`). It heavily incorporates the Gemini API (`@google/genai`).
+This repository contains "Sales Brain AI" - a Vite + React (TypeScript) SPA. Store data, bot simulation, and demo AI insights run in the browser (`src/services/clientStore.ts` + localStorage). Deployed as static files on Vercel (no Express server).
 
 ## Development Commands
 - **Install**: `npm install`
-- **Run Locally (Dev)**: `npm run dev` (Starts the Express backend and Vite frontend via `tsx`).
+- **Run Locally (Dev)**: `npm run dev` (Vite frontend; data persists in browser localStorage).
 - **Build**: `npm run build`
-- **Start (Prod)**: `npm run start` (Runs the compiled `dist/server.cjs`).
+- **Preview Prod Build**: `npm run preview`
 - **Lint**: `npm run lint`
 
 ## Terminal Constraints (CRITICAL)

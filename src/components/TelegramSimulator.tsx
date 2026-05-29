@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Sparkles, User, ShieldAlert, Image, Check, ShoppingBag, MapPin, CreditCard, ChevronRight } from "lucide-react";
 import { TelegramSession, Product, DeliveryZone, Order } from "../types";
+import { botSimulateInput } from "../services/clientStore";
 
 interface TelegramSimulatorProps {
   session: TelegramSession;
@@ -57,25 +58,18 @@ export function TelegramSimulator({
 
     setLoading(true);
     try {
-      const response = await fetch("/api/bot/simulate-input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: session.sessionId,
-          content: textToSend,
-          base64Image: finalImage || undefined,
-          transactionId: txIdInput || undefined,
-          payMethod: selectedPayMethod
-        })
+      botSimulateInput({
+        sessionId: session.sessionId,
+        content: textToSend,
+        base64Image: finalImage || undefined,
+        transactionId: txIdInput || undefined,
+        payMethod: selectedPayMethod,
       });
-
-      if (response.ok) {
-        setInputText("");
-        setTxIdInput("");
-        setMockScreenshotBase64(null);
-        setCustomAttachBase64(null);
-        onStateUpdated();
-      }
+      setInputText("");
+      setTxIdInput("");
+      setMockScreenshotBase64(null);
+      setCustomAttachBase64(null);
+      onStateUpdated();
     } catch (err) {
       console.error(err);
     } finally {
@@ -86,18 +80,12 @@ export function TelegramSimulator({
   const handleCheckoutPath = async (option: "prepay" | "cod") => {
     setLoading(true);
     try {
-      const response = await fetch("/api/bot/simulate-input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: session.sessionId,
-          checkoutOption: option,
-          payMethod: option === 'prepay' ? 'KPay' : 'CoD'
-        })
+      botSimulateInput({
+        sessionId: session.sessionId,
+        checkoutOption: option,
+        payMethod: option === "prepay" ? "KPay" : "CoD",
       });
-      if (response.ok) {
-        onStateUpdated();
-      }
+      onStateUpdated();
     } catch (err) {
       console.error(err);
     } finally {
@@ -108,18 +96,12 @@ export function TelegramSimulator({
   const handleTownshipSelection = async (town: string, payMethodSelected: 'cod' | 'prepay') => {
     setLoading(true);
     try {
-      const response = await fetch("/api/bot/simulate-input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionId: session.sessionId,
-          township: town,
-          payMethod: payMethodSelected
-        })
+      botSimulateInput({
+        sessionId: session.sessionId,
+        township: town,
+        payMethod: payMethodSelected,
       });
-      if (response.ok) {
-        onStateUpdated();
-      }
+      onStateUpdated();
     } catch (err) {
       console.error(err);
     } finally {

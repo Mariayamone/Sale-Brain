@@ -32,7 +32,8 @@ import { CustomChart } from "./components/CustomChart";
 import { TelegramSimulator } from "./components/TelegramSimulator";
 import { SmartMarketing } from "./components/SmartMarketing";
 import { Onboarding } from "./components/Onboarding";
-import { Product, DeliveryZone, Order, ShopConfig, TelegramSession, SystemState, BusinessOnboarding } from "./types";
+import { Product, DeliveryZone, Order, ShopConfig, TelegramSession, SystemState } from "./types";
+import * as store from "./services/clientStore";
 
 // Complete localized dictionary for total English & Burmese translation sync
 const dict = {
@@ -291,7 +292,6 @@ const dict = {
 export default function App() {
   const [lang, setLang] = useState<"en" | "my">("en");
   const [showSimulator, setShowSimulator] = useState<boolean>(false);
-  const [botConnectionTab, setBotConnectionTab] = useState<"telegram" | "messenger">("telegram");
 
   // Helper dictionary access
   const t = (key: keyof typeof dict['en']) => {
@@ -302,9 +302,6 @@ export default function App() {
   const [storeState, setStoreState] = useState<SystemState | null>(null);
   const [activeTab, setActiveTab] = useState<"orders" | "products" | "delivery" | "insights" | "bot_config" | "live_support" | "smart_marketing">("orders");
   const [activeSessionId, setActiveSessionId] = useState<string>("default_customer");
-  const [configDraft, setConfigDraft] = useState<ShopConfig | null>(null);
-  const [messengerStatus, setMessengerStatus] = useState<{ connected: boolean; pages: any[] } | null>(null);
-  const [loadingMessengerStatus, setLoadingMessengerStatus] = useState<boolean>(false);
 
   // Loaders
   const [loading, setLoading] = useState<boolean>(true);
@@ -338,51 +335,21 @@ export default function App() {
   const [ownerReplyText, setOwnerReplyText] = useState<string>("");
   const [activeVerificationReceipt, setActiveVerificationReceipt] = useState<Order | null>(null);
 
-  // Fetch current platform state from Express backend
   const fetchState = async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const response = await fetch("/api/state");
-      if (response.ok) {
-        const contentType = response.headers.get("Content-Type") || "";
-        if (!contentType.includes("application/json")) {
-          return;
-        }
-        const data: SystemState = await response.json();
-        setStoreState(data);
-        // If user is not currently editing bot config, keep draft synced.
-        setConfigDraft((prev) => {
-          if (activeTab === "bot_config" && prev) return prev;
-          return data.config;
-        });
-        if (data.sessions && Object.keys(data.sessions).length > 0) {
-          const keys = Object.keys(data.sessions);
-          if (!keys.includes(activeSessionId)) {
-            setActiveSessionId(keys[0]);
-          }
+      const data = store.getState();
+      setStoreState(data);
+      if (data.sessions && Object.keys(data.sessions).length > 0) {
+        const keys = Object.keys(data.sessions);
+        if (!keys.includes(activeSessionId)) {
+          setActiveSessionId(keys[0]);
         }
       }
     } catch (err) {
-      console.debug("Background poll err (silent):", err);
+      console.debug("State load err:", err);
     } finally {
       if (!silent) setLoading(false);
-    }
-  };
-
-  const fetchMessengerStatus = async () => {
-    setLoadingMessengerStatus(true);
-    try {
-      const res = await fetch("/api/messenger/status");
-      if (res.ok) {
-        const data = await res.json();
-        setMessengerStatus(data);
-      } else {
-        setMessengerStatus(null);
-      }
-    } catch {
-      setMessengerStatus(null);
-    } finally {
-      setLoadingMessengerStatus(false);
     }
   };
 
@@ -398,17 +365,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
-  // Ensure the bot-config form keeps a stable draft while typing
-  useEffect(() => {
-    if (!storeState) return;
-    if (activeTab === "bot_config") {
-      setConfigDraft((prev) => prev ?? storeState.config);
-      if (botConnectionTab === "messenger") {
-        fetchMessengerStatus();
-      }
-    }
-  }, [activeTab, storeState, botConnectionTab]);
-
   // Fetch AI strategy when the selected language changes
   useEffect(() => {
     fetchAiStrategy();
@@ -423,22 +379,13 @@ export default function App() {
   };
 
   // Retrieve AI Strategizer
-  const fetchAiStrategy = async (force: boolean = false) => {
+  const fetchAiStrategy = async (_force: boolean = false) => {
     setLoadingAi(true);
     try {
-      const url = force 
-        ? `/api/ai/strategy?force=true&lang=${lang}` 
-        : `/api/ai/strategy?lang=${lang}`;
-      const res = await fetch(url, { method: "POST" });
-      if (res.ok) {
-        const contentType = res.headers.get("Content-Type") || "";
-        if (contentType.includes("application/json")) {
-          const data = await res.json();
-          setAiAnalysisText(data.strategy);
-        }
-      }
+      const data = store.getAiStrategy(lang);
+      setAiAnalysisText(data.strategy);
     } catch (err) {
-      console.warn("Failed quietly to fetch AI strategy briefing:", err);
+      console.warn("Failed to load AI strategy briefing:", err);
     } finally {
       setLoadingAi(false);
     }
@@ -450,29 +397,14 @@ export default function App() {
     if (!storeState) return;
     setSavingAction(true);
     try {
-      const response = await fetch("/api/onboarding", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(configDraft || storeState.config)
-      });
-      if (response.ok) {
-        try {
-          const data = await response.json();
-          if (data?.config) {
-            setStoreState((prev) => prev ? ({ ...prev, config: data.config }) : prev);
-            setConfigDraft(data.config);
-          }
-        } catch {
-          // ignore JSON parse issues
-        }
-        showToast(
-          lang === "my" 
-            ? "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီး တယ်လီဂရမ်နှင့် ချိတ်ဆက်ပြီးပါပြီ။ 🟢" 
-            : "Online Shop Settings configured! Telegram Bot activated. 🟢",
-          "success"
-        );
-        fetchState();
-      }
+      store.saveOnboarding(storeState.config);
+      showToast(
+        lang === "my"
+          ? "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီးပါပြီ။ 🟢"
+          : "Online Shop Settings saved successfully. 🟢",
+        "success"
+      );
+      fetchState();
     } catch (err) {
       console.error(err);
     } finally {
@@ -488,17 +420,15 @@ export default function App() {
     
     if (window.confirm(confirmationMsg)) {
       try {
-        const res = await fetch("/api/reset", { method: "POST" });
-        if (res.ok) {
-          showToast(
-            lang === "my"
-              ? "စမ်းသပ်မှုစနစ်အား မူလပထမ ပုသိမ်ဟလာဝါအရောင်းဆိုင်ပုံစံ ပြန်လည်သတ်မှတ်ပြီးပါပြီ။"
-              : "Platform state successfully refreshed to original Pathein Store data.",
-            "success"
-          );
-          fetchState();
-          fetchAiStrategy();
-        }
+        store.resetState();
+        showToast(
+          lang === "my"
+            ? "စမ်းသပ်မှုစနစ်အား မူလပထမ ပုသိမ်ဟလာဝါအရောင်းဆိုင်ပုံစံ ပြန်လည်သတ်မှတ်ပြီးပါပြီ။"
+            : "Platform state successfully refreshed to original Pathein Store data.",
+          "success"
+        );
+        fetchState();
+        fetchAiStrategy();
       } catch (err) {
         console.error(err);
       }
@@ -511,31 +441,17 @@ export default function App() {
     setSavingAction(true);
     try {
       const isEdit = !!editingProduct;
-      const url = "/api/products";
-      const payload = {
-        action: isEdit ? "edit" : "add",
-        product: isEdit ? { ...editingProduct, ...prodForm } : prodForm
-      };
-      
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        showToast(
-          isEdit 
-            ? (lang === "my" ? "ကုန်ပစ္စည်းအချက်အလက် ပြင်ဆင်မှု ပြီးမြောက်ပါပြီ။" : "Product information updated successfully!")
-            : (lang === "my" ? "ပစ္စည်းအသစ် ကတ်တလောက်ထဲ ထည့်သွင်းပြီးပါပြီ။" : "Added premium product to store catalog!"),
-          "success"
-        );
-        setShowProductModal(false);
-        setEditingProduct(null);
-        // Clear form
-        setProdForm({ name: "", category: "Desserts", price: 4500, description: "", stock: 25, image: "" });
-        fetchState();
-      }
+      store.mutateProducts(isEdit ? "edit" : "add", isEdit ? { ...editingProduct, ...prodForm } : prodForm);
+      showToast(
+        isEdit
+          ? (lang === "my" ? "ကုန်ပစ္စည်းအချက်အလက် ပြင်ဆင်မှု ပြီးမြောက်ပါပြီ။" : "Product information updated successfully!")
+          : (lang === "my" ? "ပစ္စည်းအသစ် ကတ်တလောက်ထဲ ထည့်သွင်းပြီးပါပြီ။" : "Added premium product to store catalog!"),
+        "success"
+      );
+      setShowProductModal(false);
+      setEditingProduct(null);
+      setProdForm({ name: "", category: "Desserts", price: 4500, description: "", stock: 25, image: "" });
+      fetchState();
     } catch (err) {
       console.error(err);
     } finally {
@@ -550,15 +466,9 @@ export default function App() {
 
     if (confirm(confirmMsg)) {
       try {
-        const res = await fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "delete", product: prod })
-        });
-        if (res.ok) {
-          showToast(lang === "my" ? "ကုန်ပစ္စည်း ဖျက်ပြီးပါပြီ။" : "Product deleted successfully.", "success");
-          fetchState();
-        }
+        store.mutateProducts("delete", prod);
+        showToast(lang === "my" ? "ကုန်ပစ္စည်း ဖျက်ပြီးပါပြီ။" : "Product deleted successfully.", "success");
+        fetchState();
       } catch (err) {
         console.error(err);
       }
@@ -569,21 +479,15 @@ export default function App() {
   const handleAddZone = async () => {
     if (!newZone.township.trim()) return;
     try {
-      const res = await fetch("/api/delivery-zones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "add", zone: newZone })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my" 
-            ? `${newZone.township} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။` 
-            : `Added township rate mapping for: ${newZone.township}`, 
-          "success"
-        );
-        setNewZone({ township: "", rate: 2000, deliveryTime: "1-2 Days" });
-        fetchState();
-      }
+      store.mutateDeliveryZone("add", { zone: newZone });
+      showToast(
+        lang === "my"
+          ? `${newZone.township} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။`
+          : `Added township rate mapping for: ${newZone.township}`,
+        "success"
+      );
+      setNewZone({ township: "", rate: 2000, deliveryTime: "1-2 Days" });
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -591,20 +495,14 @@ export default function App() {
 
   const handleDeleteZone = async (idx: number, name: string) => {
     try {
-      const res = await fetch("/api/delivery-zones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", index: idx })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
-            : `Removed township shipping rule: ${name}`,
-          "info"
-        );
-        fetchState();
-      }
+      store.mutateDeliveryZone("delete", { index: idx });
+      showToast(
+        lang === "my"
+          ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
+          : `Removed township shipping rule: ${name}`,
+        "info"
+      );
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -613,43 +511,30 @@ export default function App() {
   // Order payment screenshot evaluation trigger (Accept / Cancel)
   const handleUpdateOrderStatus = async (orderId: string, status: 'confirmed' | 'cancelled' | 'completed') => {
     try {
-      const res = await fetch("/api/orders/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, status })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? `အော်ဒါ အခြေအနေကို [${status.toUpperCase()}] သို့ ပြောင်းလဲလိုက်ပါပြီ။ ဘောက်ချာပေးပို့လိုက်ပါသည်။`
-            : `Order status marked as [${status.toUpperCase()}]! Invoice sent.`,
-          "success"
-        );
-        setActiveVerificationReceipt(null);
-        fetchState();
-      }
+      store.updateOrderStatus(orderId, status);
+      showToast(
+        lang === "my"
+          ? `အော်ဒါ အခြေအနေကို [${status.toUpperCase()}] သို့ ပြောင်းလဲလိုက်ပါပြီ။`
+          : `Order status marked as [${status.toUpperCase()}]!`,
+        "success"
+      );
+      setActiveVerificationReceipt(null);
+      fetchState();
     } catch (err) {
       console.error(err);
     }
   };
 
-  // Live Manual Takeover over specified Customer session
   const handleTakeover = async (sessId: string) => {
     try {
-      const res = await fetch("/api/bot/takeover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sessId })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? "🔴 AI ဘော့တ်ကို ပိတ်လိုက်ပါပြီ။ ဆိုင်ရှင်တိုက်ရိုက်ဖြေကြားနေပါသည်။"
-            : "🔴 Bot deactivated. Owner intervention launched! Live chat active.",
-          "info"
-        );
-        fetchState();
-      }
+      store.botTakeover(sessId);
+      showToast(
+        lang === "my"
+          ? "🔴 AI ဘော့တ်ကို ပိတ်လိုက်ပါပြီ။ ဆိုင်ရှင်တိုက်ရိုက်ဖြေကြားနေပါသည်။"
+          : "🔴 Bot deactivated. Owner intervention launched! Live chat active.",
+        "info"
+      );
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -657,20 +542,14 @@ export default function App() {
 
   const handleReleaseToAi = async (sessId: string) => {
     try {
-      const res = await fetch("/api/bot/release", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sessId })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? "🟢 AI ဘော့တ်ကို ပြန်လည်ဖွင့်လိုက်ပါပြီ။ ဘော့တ်မှ ဆက်လက်ဖြေကြားပါမည်။"
-            : "🟢 Bot reactivated. Candy taking over.",
-          "success"
-        );
-        fetchState();
-      }
+      store.botRelease(sessId);
+      showToast(
+        lang === "my"
+          ? "🟢 AI ဘော့တ်ကို ပြန်လည်ဖွင့်လိုက်ပါပြီ။ ဘော့တ်မှ ဆက်လက်ဖြေကြားပါမည်။"
+          : "🟢 Bot reactivated. Candy taking over.",
+        "success"
+      );
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -680,15 +559,9 @@ export default function App() {
     e.preventDefault();
     if (!ownerReplyText.trim()) return;
     try {
-      const res = await fetch("/api/bot/owner-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: activeSessionId, content: ownerReplyText })
-      });
-      if (res.ok) {
-        setOwnerReplyText("");
-        fetchState();
-      }
+      store.botOwnerReply(activeSessionId, ownerReplyText);
+      setOwnerReplyText("");
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -762,15 +635,11 @@ export default function App() {
 
           // Persist settings to backing JSON state
           try {
-            await fetch("/api/onboarding", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...storeState.config,
-                shopName: profile.shopName,
-                ownerName: profile.ownerName,
-                onboardingCompleted: true
-              })
+            store.saveOnboarding({
+              ...storeState.config,
+              shopName: profile.shopName,
+              ownerName: profile.ownerName,
+              onboardingCompleted: true,
             });
             showToast(
               lang === "my"
@@ -863,18 +732,10 @@ export default function App() {
                 }
               }));
               // Synchronously tell backend to set onboardingCompleted to false so poller doesn't override
-              try {
-                await fetch("/api/onboarding", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    ...storeState.config,
-                    onboardingCompleted: false
-                  })
-                });
-              } catch (e) {
-                console.warn("Could not save onboarding state back to Server:", e);
-              }
+              store.saveOnboarding({
+                ...storeState.config,
+                onboardingCompleted: false,
+              });
             }}
             className="flex items-center gap-1.5 text-[9px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-1.5 px-3 rounded-lg border border-indigo-200 transition-colors cursor-pointer"
           >
@@ -1668,211 +1529,120 @@ export default function App() {
           {activeTab === "bot_config" && (
             <div className="space-y-4">
               <div className="bg-white border border-slate-200/60 rounded-2xl p-5 shadow-sm text-slate-700">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <h3 className="text-xs font-extrabold font-mono text-slate-900 flex items-center gap-2 mb-1 uppercase">
-                      {t("tabConfig")}
-                    </h3>
-                    <p className="text-[10px] text-slate-400">
-                      {lang === "my"
-                        ? "ချန်နယ် (Telegram / Messenger) မျိုးစုံနဲ့ ဘော့တ်ချိတ်ဆက်မှုများကို ဒီနေရာမှာ စီစဉ်နိုင်ပါသည်။"
-                        : "Manage Telegram + Facebook Messenger bot connections from this workspace."}
-                    </p>
-                  </div>
+                <h3 className="text-xs font-extrabold font-mono text-slate-900 flex items-center gap-2 mb-1 uppercase">
+                  {t("telegramBotActivationWorkspace")}
+                </h3>
+                <p className="text-[10px] text-slate-400">{t("oneClickOnboardingDesc")}</p>
 
-                  {/* Channel switcher */}
-                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1 w-fit">
-                    <button
-                      type="button"
-                      onClick={() => setBotConnectionTab("telegram")}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
-                        botConnectionTab === "telegram"
-                          ? "bg-[#229ED9] text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-800"
-                      }`}
-                    >
-                      Telegram
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBotConnectionTab("messenger")}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
-                        botConnectionTab === "messenger"
-                          ? "bg-[#0A7CFF] text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-800"
-                      }`}
-                    >
-                      Messenger
-                    </button>
-                  </div>
-                </div>
-
-                {botConnectionTab === "telegram" && (
-                  <>
-                    <div className="mt-4">
-                      <h4 className="text-[10px] font-extrabold font-mono tracking-wider text-slate-600 uppercase">
-                        {t("telegramBotActivationWorkspace")}
-                      </h4>
-                      <p className="text-[10px] text-slate-400">{t("oneClickOnboardingDesc")}</p>
+                {storeState.config.telegramBotUsername && (
+                  <div className="mt-4 p-3 bg-sky-50 border border-sky-100 rounded-xl flex items-center justify-between gap-3 text-slate-700">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-[#229ED9]/10 text-[#229ED9] flex items-center justify-center font-bold text-sm shrink-0">
+                        Bot
+                      </div>
+                      <div>
+                        <h4 className="text-[11px] font-bold text-slate-900">
+                          {lang === "my" ? "တယ်လီဂရမ် Bot သို့ တိုက်ရိုက်သွားရန်" : "Direct Link to Active Telegram Bot"}
+                        </h4>
+                        <p className="text-[9px] text-slate-400 font-mono">
+                          @{storeState.config.telegramBotUsername.replace("@", "")}
+                        </p>
+                      </div>
                     </div>
-
-                    {storeState.config.telegramBotUsername && (
-                      <div className="mt-4 p-3 bg-sky-50 border border-sky-100 rounded-xl flex items-center justify-between gap-3 text-slate-700">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-[#229ED9]/10 text-[#229ED9] flex items-center justify-center font-bold text-sm shrink-0">
-                            Bot
-                          </div>
-                          <div>
-                            <h4 className="text-[11px] font-bold text-slate-900">
-                              {lang === "my" ? "တယ်လီဂရမ် Bot သို့ တိုက်ရိုက်သွားရန်" : "Direct Link to Active Telegram Bot"}
-                            </h4>
-                            <p className="text-[9px] text-slate-400 font-mono">
-                              @{storeState.config.telegramBotUsername.replace("@", "")}
-                            </p>
-                          </div>
-                        </div>
-                        <a
-                          href={`https://t.me/${storeState.config.telegramBotUsername.replace("@", "")}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#229ED9] hover:bg-[#34aadf] text-white flex items-center gap-1 cursor-pointer transition-all shadow-sm shrink-0 flex items-center gap-1"
-                        >
-                          <Send size={11} className="rotate-45" />
-                          <span>{t("liveBot")}</span>
-                          <ExternalLink size={10} />
-                        </a>
-                      </div>
-                    )}
-
-                    <form onSubmit={handleOnboardingSubmit} className="space-y-4 mt-5 text-xs text-slate-600">
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("storeNameLabel")}</label>
-                        <input
-                          type="text"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                          value={configDraft?.shopName || ""}
-                          onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, shopName: e.target.value }) : prev)}
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("smeOwnerNameLabel")}</label>
-                          <input
-                            type="text"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                            value={configDraft?.ownerName || ""}
-                            onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, ownerName: e.target.value }) : prev)}
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("contactPhoneLabel")}</label>
-                          <input
-                            type="text"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                            value={configDraft?.phone || ""}
-                            onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, phone: e.target.value }) : prev)}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-center">
-                            <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("customBotTokenLabel")}</label>
-                            <span className="text-[8px] font-mono text-indigo-500 select-none bg-indigo-50 px-1 rounded">{t("setViaBotFather")}</span>
-                          </div>
-                          <input
-                            type="text"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-[9px]"
-                            value={configDraft?.telegramBotToken || ""}
-                            onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, telegramBotToken: e.target.value }) : prev)}
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("telegramBotUsernameLabel")}</label>
-                          <input
-                            type="text"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                            value={configDraft?.telegramBotUsername || ""}
-                            onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, telegramBotUsername: e.target.value }) : prev)}
-                          />
-                        </div>
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={savingAction}
-                        className="w-full bg-[#0f1d3a] hover:bg-indigo-900 text-white font-bold py-3 rounded-xl cursor-pointer uppercase text-xs tracking-wider"
-                      >
-                        {savingAction ? "Re-connecting..." : t("saveStoreSettingsBtn")}
-                      </button>
-                    </form>
-                  </>
+                    <a
+                      href={`https://t.me/${storeState.config.telegramBotUsername.replace("@", "")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#229ED9] hover:bg-[#34aadf] text-white flex items-center gap-1 cursor-pointer transition-all shadow-sm shrink-0 flex items-center gap-1"
+                    >
+                      <Send size={11} className="rotate-45" />
+                      <span>{t("liveBot")}</span>
+                      <ExternalLink size={10} />
+                    </a>
+                  </div>
                 )}
 
-                {botConnectionTab === "messenger" && (
-                  <div className="mt-4 space-y-4">
-                    <div className="p-3 rounded-xl border border-blue-100 bg-blue-50/60">
-                      <div className="text-[10px] font-extrabold font-mono tracking-wider text-blue-700 uppercase">
-                        FACEBOOK MESSENGER BOT ACTIVATION WORKSPACE
-                      </div>
-                      <div className="text-[10px] text-slate-600 mt-1 leading-relaxed">
-                        {lang === "my"
-                          ? "Messenger ဘော့တ်ကို သင့် Facebook Page နဲ့ ချိတ်ဆက်ရန် “Connect Facebook Page” ကိုနှိပ်ပါ။ Developer အနေဖြင့် token/id ထည့်စရာမလိုပါ။"
-                          : "Click “Connect Facebook Page” to link Messenger. No tokens or IDs required."}
-                      </div>
+                <form onSubmit={handleOnboardingSubmit} className="space-y-4 mt-5 text-xs text-slate-600">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("storeNameLabel")}</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
+                      value={storeState.config.shopName}
+                      onChange={(e) => setStoreState({
+                        ...storeState,
+                        config: { ...storeState.config, shopName: e.target.value }
+                      })}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("smeOwnerNameLabel")}</label>
+                      <input
+                        type="text"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
+                        value={storeState.config.ownerName}
+                        onChange={(e) => setStoreState({
+                          ...storeState,
+                          config: { ...storeState.config, ownerName: e.target.value }
+                        })}
+                      />
                     </div>
 
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          window.open("http://localhost:8000/messenger/oauth/start", "_blank", "noopener,noreferrer");
-                        }}
-                        className="flex-1 bg-[#0A7CFF] hover:bg-[#0a72ea] text-white font-bold py-3 rounded-xl cursor-pointer uppercase text-xs tracking-wider"
-                      >
-                        Connect Facebook Page
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={fetchMessengerStatus}
-                        disabled={loadingMessengerStatus}
-                        className="flex-1 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold py-3 rounded-xl cursor-pointer uppercase text-xs tracking-wider"
-                      >
-                        {loadingMessengerStatus ? "Checking..." : "Refresh Status"}
-                      </button>
-                    </div>
-
-                    <div className="p-3 rounded-xl border border-slate-200 bg-white">
-                      <div className="text-[9px] font-extrabold font-mono tracking-wider text-slate-500 uppercase">
-                        Connection status
-                      </div>
-                      {messengerStatus?.connected ? (
-                        <div className="mt-2 text-xs text-slate-700">
-                          <div className="font-bold text-emerald-700">Connected</div>
-                          <div className="text-[10px] text-slate-500 mt-1">
-                            {(messengerStatus.pages || []).length > 0
-                              ? `Pages: ${(messengerStatus.pages || []).map((p: any) => p.page_name || p.page_id).join(", ")}`
-                              : "Page connected, but page details not available."}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="mt-2 text-xs text-slate-600">
-                          <div className="font-bold text-amber-700">Not connected yet</div>
-                          <div className="text-[10px] text-slate-500 mt-1">
-                            {lang === "my"
-                              ? "Connect Facebook Page ကို နှိပ်ပြီး Facebook မှ ခွင့်ပြုချက်ပေးပါ။"
-                              : "Click Connect Facebook Page and finish Facebook authorization."}
-                          </div>
-                        </div>
-                      )}
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("contactPhoneLabel")}</label>
+                      <input
+                        type="text"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
+                        value={storeState.config.phone}
+                        onChange={(e) => setStoreState({
+                          ...storeState,
+                          config: { ...storeState.config, phone: e.target.value }
+                        })}
+                      />
                     </div>
                   </div>
-                )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("customBotTokenLabel")}</label>
+                        <span className="text-[8px] font-mono text-indigo-500 select-none bg-indigo-50 px-1 rounded">{t("setViaBotFather")}</span>
+                      </div>
+                      <input
+                        type="text"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-[9px]"
+                        value={storeState.config.telegramBotToken}
+                        onChange={(e) => setStoreState({
+                          ...storeState,
+                          config: { ...storeState.config, telegramBotToken: e.target.value }
+                        })}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("telegramBotUsernameLabel")}</label>
+                      <input
+                        type="text"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
+                        value={storeState.config.telegramBotUsername}
+                        onChange={(e) => setStoreState({
+                          ...storeState,
+                          config: { ...storeState.config, telegramBotUsername: e.target.value }
+                        })}
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={savingAction}
+                    className="w-full bg-[#0f1d3a] hover:bg-indigo-900 text-white font-bold py-3 rounded-xl cursor-pointer uppercase text-xs tracking-wider"
+                  >
+                    {savingAction ? "Re-connecting..." : t("saveStoreSettingsBtn")}
+                  </button>
+                </form>
               </div>
             </div>
           )}

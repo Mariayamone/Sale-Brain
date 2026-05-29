@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { SystemState, Product } from "../types";
 import { CustomChart } from "./CustomChart";
+import { getAiMarketingImage, getAiMarketingInsights } from "../services/clientStore";
 
 interface SmartMarketingProps {
   state: SystemState;
@@ -320,15 +321,7 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
   const fetchMarketingInsights = async (campaign: string) => {
     setLoading(true);
     try {
-      const response = await fetch("/api/ai/marketing/insights", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          campaignType: campaign,
-          productIds: selectedProductIds
-        }),
-      });
-      const data = await response.json();
+      const data = getAiMarketingInsights(campaign, selectedProductIds);
       if (data.success && data.insights) {
         setInsights(data.insights);
         // Prepopulate text poster configurations based on AI descriptions
@@ -391,24 +384,14 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
     setAiImageLoading(true);
     setAiImageError(null);
     try {
-      const response = await fetch("/api/ai/marketing/image", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          prompt: insights.bannerPrompt,
-          campaignType: selectedPreset,
-          productId: selectedProduct,
-          aspectRatio: aspectRatio
-        }),
-      });
-      const data = await response.json();
+      const data = getAiMarketingImage(selectedPreset);
       if (data.success && data.imageUrl) {
         setAiImage(data.imageUrl);
       } else {
-        setAiImageError(data.error || "Failed to generate AI graphic.");
+        setAiImageError("Failed to generate marketing graphic.");
       }
     } catch (err) {
-      setAiImageError("API Key Offline / Quota limit exceeded for Multimodal Imagen tasks.");
+      setAiImageError("Could not load marketing image.");
     } finally {
       setAiImageLoading(false);
     }

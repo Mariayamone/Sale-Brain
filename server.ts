@@ -3,11 +3,11 @@ import path from "path";
 import fs from "fs";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { SystemState, Product, DeliveryZone, Order, ChatMessage, TelegramSession } from "./src/types";
 
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -15,9 +15,6 @@ app.use(express.json({ limit: '10mb' }));
 const STATE_FILE = process.env.VERCEL
   ? path.join("/tmp", "sales_brain_state.json")
   : path.join(process.cwd(), "sales_brain_state.json");
-
-// Helper types
-import { SystemState, Product, DeliveryZone, Order, ChatMessage, TelegramSession } from "./src/types";
 
 // Default starter dataset
 const DEFAULT_STATE: SystemState = {
@@ -2032,31 +2029,4 @@ Your tone should be inspiring, professional, and clear. Under 220 words. Keep he
 });
 
 
-// Vite Middleware & Static Fallback Asset Serving Code as mandated by full-stack React framework
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa"
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
-
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Sales Brain AI Server] up and running under standard port: ${PORT}`);
-  });
-}
-
 export default app;
-
-// Local dev / standalone prod only — on Vercel, api/index.ts serves the Express app
-if (!process.env.VERCEL) {
-  startServer();
-}

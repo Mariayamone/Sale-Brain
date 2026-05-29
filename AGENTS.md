@@ -2,24 +2,26 @@
 
 ## Project Overview
 
-This repository contains "Sales Brain AI" - a full-stack JavaScript application for AI-powered Telegram commerce. It enables Myanmar businesses to sell products via Telegram with AI-assisted customer service.
+This repository contains "Sales Brain AI" — a Vite + React (TypeScript) SPA for AI-assisted Telegram commerce demos. Store data, bot simulation, and marketing insights run in the browser via `src/services/clientStore.ts` and `localStorage`. The app deploys as static files on Vercel (no Express server).
 
 ### Technology Stack
 
 - **Frontend:** React 19, TypeScript, Vite, Tailwind CSS 4, Motion (animations), Lucide React (icons)
-- **Backend:** Express.js (embedded in `server.ts`) with Vite SSR
-- **Database:** File-based JSON state (`sales_brain_state.json`), Supabase client ready for future migration
-- **AI:** Google Gemini API (`@google/genai`)
+- **State:** Browser `localStorage` (`sales_brain_state_v1` key) via `clientStore.ts`
+- **Bot / AI demo:** `botSimulator.ts`, `fallbackAi.ts` (rule-based insights; no live Gemini in the browser build)
+- **Deploy:** Vercel static hosting (`vercel.json`)
 
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `server.ts` | Express server, state management, API endpoints |
 | `src/App.tsx` | Main React application |
 | `src/types.ts` | TypeScript interfaces (Product, Order, Session, etc.) |
-| `src/components/*.tsx` | UI components (Onboarding, SmartMarketing, TelegramSimulator, CustomChart) |
-| `sales_brain_state.json` | Persistent state file |
+| `src/services/clientStore.ts` | State load/save, product/order mutations |
+| `src/services/botSimulator.ts` | Telegram bot message simulation |
+| `src/services/fallbackAi.ts` | Demo strategy & marketing insights |
+| `src/data/defaultState.ts` | Default seed state |
+| `src/components/*.tsx` | UI (Onboarding, SmartMarketing, TelegramSimulator, CustomChart) |
 
 ---
 
@@ -28,10 +30,10 @@ This repository contains "Sales Brain AI" - a full-stack JavaScript application 
 | Command | Description |
 |---------|-------------|
 | `npm install` | Install dependencies |
-| `npm run dev` | Start development (Express + Vite) |
+| `npm run dev` | Start Vite dev server (data persists in browser `localStorage`) |
 | `npm run build` | Production build |
-| `npm run start` | Run production server |
-| `npm run lint` | TypeScript type checking |
+| `npm run preview` | Preview production build locally |
+| `npm run lint` | TypeScript type checking (`tsc --noEmit`) |
 
 ---
 
@@ -39,8 +41,8 @@ This repository contains "Sales Brain AI" - a full-stack JavaScript application 
 
 ### PowerShell Environment
 - **Primary shell:** Windows PowerShell
-- **NO Bash syntax:** Do not use `cat << 'EOF'`, heredocs, or Unix utilities in terminal commands
-- **File manipulation:** Use agent file I/O tools (`write`, `edit`) instead of shell pipes for complex content
+- **NO Bash syntax:** Do not use `cat << 'EOF'`, heredocs, or Unix utilities in terminal commands unless they are proven cross-platform npm scripts
+- **File manipulation:** Prefer agent file I/O tools (`write`, `edit`) over shell pipes. For one-off scripts, write a local file (e.g. `script.cjs`), run `node script.cjs`, then remove it
 
 ### Unicode Protection
 - **NEVER inject non-ASCII text in PowerShell commands.** Burmese (Myanmar) text in shell commands will corrupt to `?????`.
@@ -50,16 +52,19 @@ This repository contains "Sales Brain AI" - a full-stack JavaScript application 
 ### Example of Correct Approach
 
 ```powershell
-# ❌ Wrong - Unicode corruption
+# Wrong - Unicode corruption
 node -e "console.log('မြန်မာ')"
 
-# ✅ Correct - Use file tools
+# Correct - Use file tools
 # Write the content to a file, then read/process it
 ```
 
 ---
 
 ## Localization & i18n Guardrails
+
+### Manual Confirmations
+- The user prefers to provide or confirm translated content (especially Burmese) before it is applied systematically.
 
 ### Translation Function Scope
 - **NEVER call `t()` inside helper functions** declared outside React components. Doing so resolves to `undefined` and causes white screens.
@@ -79,34 +84,26 @@ node -e "console.log('မြန်မာ')"
 
 ### State Management
 ```typescript
-// state object pattern
-interface SystemState {
-  config: ShopConfig;
-  products: Product[];
-  deliveryZones: DeliveryZone[];
-  orders: Order[];
-  sessions: { [id: string]: TelegramSession };
-}
+// SystemState lives in clientStore.ts + localStorage
+import { getState, mutateProducts } from "./services/clientStore";
 
-// Always persist after mutations
-state.products.push(newProduct);
-saveState(); // CRITICAL - persists to sales_brain_state.json
+const state = getState();
+mutateProducts("add", { name: "New Item", price: 5000 });
+// clientStore calls save() internally after mutations
 ```
 
-### API Endpoints
-- All endpoints return JSON: `Response.json({ data })` or `res.json({ success: true })`
-- Wrap file operations in try/catch
-- Always validate input before processing
+- Default seed data: `src/data/defaultState.ts`
+- Storage key: `sales_brain_state_v1`
+- Call exported mutators in `clientStore.ts` rather than mutating state directly
 
 ### Error Handling
 ```typescript
-// Always wrap async operations
 try {
   const result = await riskyOperation();
-  res.json({ success: true, data: result });
+  return { success: true, data: result };
 } catch (error) {
-  console.error('Operation failed:', error);
-  res.json({ success: false, error: error.message });
+  console.error("Operation failed:", error);
+  return { success: false, error: (error as Error).message };
 }
 ```
 
@@ -116,7 +113,7 @@ try {
 
 ### Type Definitions
 - Define all interfaces in `src/types.ts`
-- NEVER use `any` type - use `unknown` with proper type guards
+- NEVER use `any` type — use `unknown` with proper type guards
 - Use proper union types for optional values: `string | null` not `string?`
 
 ### Example Interfaces
@@ -139,9 +136,9 @@ interface Order {
   customerTelegramId: string;
   township: string;
   deliveryFee: number;
-  paymentMethod: 'cod' | 'prepay';
+  paymentMethod: "cod" | "prepay";
   totalAmount: number;
-  status: 'pending' | 'verifying' | 'confirmed' | 'completed' | 'cancelled';
+  status: "pending" | "verifying" | "confirmed" | "completed" | "cancelled";
   items: OrderItem[];
   createdAt: string;
 }
@@ -162,12 +159,12 @@ interface Order {
 
 ### State Updates
 ```typescript
-// ❌ Wrong - can cause stale closures
+// Wrong - can cause stale closures
 useEffect(() => {
-  fetchData().then(setData); // setData might be stale
+  fetchData().then(setData);
 }, []);
 
-// ✅ Correct - include proper dependencies
+// Correct - include proper dependencies
 useEffect(() => {
   fetchData().then(setData);
 }, [/* add proper deps */]);
@@ -175,40 +172,19 @@ useEffect(() => {
 
 ---
 
-## AI Integration (Gemini)
+## AI / Marketing Demo Layer
 
-### Environment Variables
-- Store API keys in `.env` file
-- Access via `process.env.GEMINI_API_KEY`
-- NEVER hardcode keys in source code
-
-### Usage Pattern
-```typescript
-import { GoogleGenAI, Type } from "@google/genai";
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-async function generateResponse(prompt: string) {
-  const response = await ai.models.generateContent({
-    model: "gemini-2.0-flash",
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-  });
-  return response.text;
-}
-```
-
-### Error Handling
-- Always wrap AI calls in try/catch
-- Provide fallback responses for production use
-- Never expose API errors to users
+- **Current build:** Insights and strategy copy come from `src/services/fallbackAi.ts` (deterministic, no API key required).
+- **Bot replies:** `src/services/botSimulator.ts` simulates Telegram customer flows in the browser.
+- If adding live Gemini later, keep API keys server-side only — never expose keys in the static Vercel bundle.
 
 ---
 
 ## Common Pitfalls to Avoid
 
 ### 1. State Not Persisting
-**Problem:** Changes lost after server restart  
-**Solution:** Call `saveState()` after every state mutation
+**Problem:** Changes lost on refresh  
+**Solution:** Mutate state only through `clientStore.ts` exports; they call `save()` to `localStorage`
 
 ### 2. Unicode Corruption
 **Problem:** Burmese text shows as `?????`  
@@ -218,13 +194,13 @@ async function generateResponse(prompt: string) {
 **Problem:** TypeScript errors  
 **Solution:** Use interfaces from `src/types.ts`, not `any`
 
-### 4. API Response Format
-**Problem:** Frontend can't parse response  
-**Solution:** Always return JSON from API endpoints
+### 4. `t()` Outside Components
+**Problem:** White screen crash  
+**Solution:** Pass `t` as an argument to helpers; never call `t()` at module scope
 
-### 5. Environment Variables
-**Problem:** `process.env.VARIABLE` undefined  
-**Solution:** Ensure `dotenv.config()` runs early in `server.ts`
+### 5. Assuming a Backend
+**Problem:** Looking for `server.ts` or Express APIs  
+**Solution:** This repo is a client-only SPA; use `clientStore` and service modules instead
 
 ---
 
@@ -233,7 +209,7 @@ async function generateResponse(prompt: string) {
 | Type | Pattern | Example |
 |------|---------|---------|
 | Components | PascalCase | `Onboarding.tsx`, `CustomChart.tsx` |
-| Utilities | camelCase | `supabase.ts`, `helpers.ts` |
+| Services | camelCase | `clientStore.ts`, `botSimulator.ts` |
 | Types | PascalCase | `types.ts` |
 | Styles | Lowercase | `index.css` |
 
@@ -246,9 +222,7 @@ Key packages in `package.json`:
 ```json
 {
   "dependencies": {
-    "@google/genai": "^2.4.0",
     "@supabase/supabase-js": "^2.106.2",
-    "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
     "react": "^19.0.1",
@@ -264,9 +238,9 @@ Key packages in `package.json`:
 
 When working on this codebase:
 
-1. **Run tests:** `npm run lint` before committing
-2. **Check state:** Verify `saveState()` is called after mutations
-3. **Verify types:** Use TypeScript interfaces, not `any`
+1. **Run lint:** `npm run lint` before committing
+2. **Check state:** Mutate via `clientStore.ts`; verify `localStorage` updates in devtools
+3. **Verify types:** Use TypeScript interfaces from `src/types.ts`, not `any`
 4. **Handle errors:** Wrap async operations in try/catch
 5. **Unicode safety:** Use file tools for non-ASCII content
 6. **Check architecture:** Review `architecture-design/architecture.md` for context
@@ -274,6 +248,6 @@ When working on this codebase:
 
 ---
 
-*Last Updated: 2025-05-28*
+*Last Updated: 2025-05-29*
 *For project architecture details, see `architecture-design/architecture.md`*
 *For decision history, see `decision-log/README.md`*

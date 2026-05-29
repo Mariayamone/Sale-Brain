@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { SystemState, Product } from "../types";
 import { CustomChart } from "./CustomChart";
+import { getAiMarketingImage, getAiMarketingInsights } from "../services/clientStore";
 
 interface SmartMarketingProps {
   state: SystemState;
@@ -320,11 +321,7 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
   const fetchMarketingInsights = async (campaign: string) => {
     setLoading(true);
     try {
-      const { invokeApi } = await import("../services/api");
-      const data = await invokeApi<{ success: boolean; insights: Record<string, unknown> }>(
-        "ai/marketing/insights",
-        { campaignType: campaign, productIds: selectedProductIds }
-      );
+      const data = getAiMarketingInsights(campaign, selectedProductIds);
       if (data.success && data.insights) {
         setInsights(data.insights as unknown as MarketingInsights);
         // Prepopulate text poster configurations based on AI descriptions
@@ -387,23 +384,14 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
     setAiImageLoading(true);
     setAiImageError(null);
     try {
-      const { invokeApi } = await import("../services/api");
-      const data = await invokeApi<{ success: boolean; imageUrl?: string; error?: string }>(
-        "ai/marketing/image",
-        {
-          prompt: insights.bannerPrompt,
-          campaignType: selectedPreset,
-          productId: selectedProduct,
-          aspectRatio: aspectRatio,
-        }
-      );
+      const data = getAiMarketingImage(selectedPreset);
       if (data.success && data.imageUrl) {
         setAiImage(data.imageUrl);
       } else {
-        setAiImageError(data.error || "Failed to generate AI graphic.");
+        setAiImageError("Failed to generate marketing graphic.");
       }
     } catch (err) {
-      setAiImageError("API Key Offline / Quota limit exceeded for Multimodal Imagen tasks.");
+      setAiImageError("Could not load marketing image.");
     } finally {
       setAiImageLoading(false);
     }

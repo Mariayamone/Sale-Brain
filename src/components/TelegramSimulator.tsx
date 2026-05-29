@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Sparkles, User, ShieldAlert, Image, Check, ShoppingBag, MapPin, CreditCard, ChevronRight } from "lucide-react";
 import { TelegramSession, Product, DeliveryZone, Order } from "../types";
+import { botSimulateInput } from "../services/clientStore";
 
 interface TelegramSimulatorProps {
   session: TelegramSession;
@@ -57,21 +58,18 @@ export function TelegramSimulator({
 
     setLoading(true);
     try {
-      const { invokeApi } = await import("../services/api");
-      await invokeApi("bot/simulate-input", {
+      botSimulateInput({
         sessionId: session.sessionId,
         content: textToSend,
         base64Image: finalImage || undefined,
         transactionId: txIdInput || undefined,
         payMethod: selectedPayMethod,
       });
-      {
-        setInputText("");
-        setTxIdInput("");
-        setMockScreenshotBase64(null);
-        setCustomAttachBase64(null);
-        onStateUpdated();
-      }
+      setInputText("");
+      setTxIdInput("");
+      setMockScreenshotBase64(null);
+      setCustomAttachBase64(null);
+      onStateUpdated();
     } catch (err) {
       console.error(err);
     } finally {
@@ -82,8 +80,7 @@ export function TelegramSimulator({
   const handleCheckoutPath = async (option: "prepay" | "cod") => {
     setLoading(true);
     try {
-      const { invokeApi } = await import("../services/api");
-      await invokeApi("bot/simulate-input", {
+      botSimulateInput({
         sessionId: session.sessionId,
         checkoutOption: option,
         payMethod: option === "prepay" ? "KPay" : "CoD",
@@ -99,8 +96,7 @@ export function TelegramSimulator({
   const handleTownshipSelection = async (town: string, payMethodSelected: 'cod' | 'prepay') => {
     setLoading(true);
     try {
-      const { invokeApi } = await import("../services/api");
-      await invokeApi("bot/simulate-input", {
+      botSimulateInput({
         sessionId: session.sessionId,
         township: town,
         payMethod: payMethodSelected,

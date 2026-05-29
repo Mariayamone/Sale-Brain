@@ -145,6 +145,13 @@ export function Onboarding({
 
       if (error) throw error;
 
+      // Sync RAG Knowledge Base
+      try {
+        await invokeApi("sync-knowledge");
+      } catch (syncErr) {
+        console.error("RAG Sync failed, but onboarding continued:", syncErr);
+      }
+
       setTimeout(() => {
         setStep(5);
         setSaving(false);

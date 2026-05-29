@@ -3,6 +3,7 @@ import type { ChatMessage, Order, SystemState } from "./types.ts";
 import type { ShopContext } from "./context.ts";
 import { processCustomerMessage } from "./botEngine.ts";
 import { getTelegramChatId, registerTelegramWebhook } from "./telegram.ts";
+import { syncShopKnowledge } from "./knowledge.ts";
 
 const strategyCache: Record<string, { text: string; at: number }> = {};
 const STRATEGY_TTL = 15 * 60 * 1000;
@@ -16,6 +17,8 @@ export async function handleAction(
   switch (action) {
     case "onboarding":
       return handleOnboarding(ctx, body);
+    case "sync-knowledge":
+      return syncShopKnowledge(ctx);
     case "reset":
       return handleReset(ctx);
     case "orders/update":

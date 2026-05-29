@@ -303,6 +303,14 @@ export default function App() {
   const [showLandingPage, setShowLandingPage] = useState<boolean>(true);
   const [showSimulator, setShowSimulator] = useState<boolean>(false);
 
+  // Simple routing for public shop view
+  const shopMatch = window.location.pathname.match(/\/shop\/([^\/]+)/);
+  const publicShopId = shopMatch ? shopMatch[1] : null;
+
+  if (publicShopId) {
+    return <PublicShop shopId={publicShopId} />;
+  }
+
   // Helper dictionary access
   const t = (key: keyof typeof dict['en']): any => {
     return dict[lang][key] || dict['en'][key];

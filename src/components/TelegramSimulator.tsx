@@ -36,6 +36,17 @@ export function TelegramSimulator({
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const mockReceipts = [
+    { name: "KBZPay Success", url: "https://placehold.co/400x600/003399/white?text=KPay+Receipt+Last+6:123456" },
+    { name: "WavePay Success", url: "https://placehold.co/400x600/f7931e/white?text=WavePay+Receipt+Last+6:654321" }
+  ];
+
+  const suggestions = [
+    { label: "Check Menu", text: "Show me the product menu" },
+    { label: "How to Pay?", text: "How can I pay for my order?" },
+    { label: "Delivery info", text: "What are the delivery charges for Yankin?" }
+  ];
+
   // Sync internal session with prop if not public
   useEffect(() => {
     if (!isPublic) {

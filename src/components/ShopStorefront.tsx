@@ -101,7 +101,7 @@ function ShopInfoPanel({ shop }: { shop: PublicShop }) {
               <p className="text-slate-400">Delivery</p>
               <p className="mt-1 leading-6 text-slate-100">
                 {shop.deliveryZones.length > 0 
-                  ? shop.deliveryZones.map(z => `${z.township}: ${z.rate} MMK`).join(", ")
+                  ? shop.deliveryZones.map(z => `${z.township_name}: ${z.rate} MMK`).join(", ")
                   : shop.deliveryInfo || "Ask for delivery rates in chat."}
               </p>
             </div>

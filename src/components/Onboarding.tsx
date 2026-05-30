@@ -8,7 +8,7 @@ import {
   Sparkles,
   Copy,
   Check,
-  ExternalLink
+  ExternalLink,
   Phone,
   MapPin,
 } from "lucide-react";
@@ -19,11 +19,18 @@ import { saveShopOnboarding } from "../services/shopRecord";
 import { loadTownships } from "../data/townships";
 import type { OnboardingFormState } from "../types";
 import { generateShopId, buildShopPublicUrl } from "../utils/shopId";
+import { supabase } from "../utils/supabase";
 
 interface OnboardingProps {
   lang: "en" | "my";
   onComplete: (
-    profile: { shopName: string; ownerName: string; phone: string; businessAddress: string },
+    profile: {
+      shopName: string;
+      ownerName: string;
+      phone: string;
+      businessAddress: string;
+      shopId?: string;
+    },
     aiSummary: string
   ) => void;
   initialFormData?: OnboardingFormState;
@@ -62,6 +69,8 @@ export function Onboarding({
   const { user } = useAuth();
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [saving, setSaving] = useState(false);
+  const [generatedShopId, setGeneratedShopId] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const [formData, setFormData] = useState<OnboardingFormState>(() => ({
     ...defaultForm(),
@@ -231,6 +240,8 @@ export function Onboarding({
     onComplete({
       shopName: formData.business_name,
       ownerName: user.email?.split('@')[0] || "Owner",
+      phone: formData.phone || "",
+      businessAddress: formData.business_address || "",
       shopId: generatedShopId
     }, aiSummary);
   };

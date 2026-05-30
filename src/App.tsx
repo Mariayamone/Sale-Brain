@@ -346,7 +346,7 @@ export default function App() {
   // Forms / Input Dialogs State
   const [showProductModal, setShowProductModal] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [showNotification, setShowNotification] = useState<{ text: string; type: "success" | "info" } | null>(null);
+  const [showNotification, setShowNotification] = useState<{ text: string; type: "success" | "info" | "error" } | null>(null);
   const [copiedConfigLink, setCopiedConfigLink] = useState<boolean>(false);
 
   // New Product Form state

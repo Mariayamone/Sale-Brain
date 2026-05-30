@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { SystemState, Product } from "../types";
 import { CustomChart } from "./CustomChart";
+import { getAiMarketingImage, getAiMarketingInsights } from "../services/clientStore";
 
 interface SmartMarketingProps {
   state: SystemState;
@@ -291,7 +292,6 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
   const productMetrics = state.products.map(p => {
     return {
       name: p.name,
-      category: p.category,
       sold: itemsSold[p.name] || 0,
       stock: p.stock,
       price: p.price
@@ -320,17 +320,9 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
   const fetchMarketingInsights = async (campaign: string) => {
     setLoading(true);
     try {
-      const response = await fetch("/api/ai/marketing/insights", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          campaignType: campaign,
-          productIds: selectedProductIds
-        }),
-      });
-      const data = await response.json();
+      const data = getAiMarketingInsights(campaign, selectedProductIds);
       if (data.success && data.insights) {
-        setInsights(data.insights);
+        setInsights(data.insights as unknown as MarketingInsights);
         // Prepopulate text poster configurations based on AI descriptions
         const rec = data.insights.recommendations[0];
         if (rec) {
@@ -391,24 +383,14 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
     setAiImageLoading(true);
     setAiImageError(null);
     try {
-      const response = await fetch("/api/ai/marketing/image", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          prompt: insights.bannerPrompt,
-          campaignType: selectedPreset,
-          productId: selectedProduct,
-          aspectRatio: aspectRatio
-        }),
-      });
-      const data = await response.json();
+      const data = getAiMarketingImage(selectedPreset);
       if (data.success && data.imageUrl) {
         setAiImage(data.imageUrl);
       } else {
-        setAiImageError(data.error || "Failed to generate AI graphic.");
+        setAiImageError("Failed to generate marketing graphic.");
       }
     } catch (err) {
-      setAiImageError("API Key Offline / Quota limit exceeded for Multimodal Imagen tasks.");
+      setAiImageError("Could not load marketing image.");
     } finally {
       setAiImageLoading(false);
     }
@@ -710,7 +692,6 @@ export function SmartMarketing({ state, lang = "en" }: SmartMarketingProps) {
                         <img src={p.image} alt={p.name} className="w-10 h-10 object-cover rounded-md border border-slate-200" referrerPolicy="no-referrer" />
                         <div className="min-w-0 flex-1">
                            <span className="text-xs font-bold block truncate leading-tight text-slate-900">{p.name}</span>
-                           <span className="text-[10px] text-slate-500 font-sans">{p.category}</span>
                            <span className="text-[10px] font-mono block mt-0.5 text-slate-700">{p.price.toLocaleString()} MMK</span>
                         </div>
                       </div>

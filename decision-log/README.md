@@ -26,13 +26,21 @@ If the decision introduces a strict constraint, copy the relevant instruction in
 
 | ID | Date | Decision Summary | Status | Rule Synced |
 | --- | --- | --- | --- | --- |
-| **DEC-001** | YYYY-MM-DD | [Decision title] | `Proposed` | [Yes/No] |
+| **DEC-001** | 2025-05-27 | Monolithic Express + Vite architecture | `Accepted` | No |
+| **DEC-002** | 2025-05-27 | File-based JSON state persistence | `Accepted` | No |
+| **DEC-003** | 2025-05-27 | Gemini 2.0 Flash for AI responses | `Accepted` | No |
+| **DEC-004** | 2025-05-28 | React 19 with TypeScript | `Accepted` | No |
+| **DEC-005** | 2025-05-28 | Motion library for animations | `Accepted` | No |
 
 ---
 
 ## Decision Files
 
-- [DEC-001](./DEC-001.md) - [Title]
+- [DEC-001](./DEC-001.md) - Monolithic Express + Vite architecture
+- [DEC-002](./DEC-002.md) - File-based JSON state persistence
+- [DEC-003](./DEC-003.md) - Gemini 2.0 Flash for AI responses
+- [DEC-004](./DEC-004.md) - React 19 with TypeScript
+- [DEC-005](./DEC-005.md) - Motion library for animations
 
 ---
 
@@ -78,5 +86,5 @@ Copy this template for each new decision (`DEC-00X.md`):
 
 ---
 
-*Last Updated: YYYY-MM-DD*  
-*Maintained by: [Team Name / Lead Developer]*
+*Last Updated: 2025-05-28*  
+*Maintained by: Development Team*

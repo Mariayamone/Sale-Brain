@@ -1,26 +1,33 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Sparkles, User, ShieldAlert, Image, Check, ShoppingBag, MapPin, CreditCard, ChevronRight } from "lucide-react";
 import { TelegramSession, Product, DeliveryZone, Order } from "../types";
+import { botSimulateInput } from "../services/clientStore";
+import { supabase } from "../utils/supabase";
 
 interface TelegramSimulatorProps {
-  session: TelegramSession;
+  session: TelegramSession | undefined;
   products: Product[];
   deliveryZones: DeliveryZone[];
   onStateUpdated: () => void;
-  onSendReply: (text: string) => Promise<void>;
-  onTriggerTakeover: () => Promise<void>;
-  onTriggerRelease: () => Promise<void>;
+  onSendReply?: (text: string) => Promise<void>;
+  onTriggerTakeover?: () => Promise<void>;
+  onTriggerRelease?: () => Promise<void>;
+  isPublic?: boolean;
+  shopId?: string;
 }
 
 export function TelegramSimulator({
-  session,
+  session: initialSession,
   products,
   deliveryZones,
   onStateUpdated,
   onSendReply,
   onTriggerTakeover,
-  onTriggerRelease
+  onTriggerRelease,
+  isPublic = false,
+  shopId
 }: TelegramSimulatorProps) {
+  const [session, setSession] = useState<TelegramSession | undefined>(initialSession);
   const [inputText, setInputText] = useState("");
   const [txIdInput, setTxIdInput] = useState("");
   const [selectedPayMethod, setSelectedPayMethod] = useState<'KPay' | 'WavePay' | 'CBPay' | 'AYA Pay'>('KPay');
@@ -29,26 +36,74 @@ export function TelegramSimulator({
   const [loading, setLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  const mockReceipts = [
+    { name: "KBZPay Success", url: "https://placehold.co/400x600/003399/white?text=KPay+Receipt+Last+6:123456" },
+    { name: "WavePay Success", url: "https://placehold.co/400x600/f7931e/white?text=WavePay+Receipt+Last+6:654321" }
+  ];
+
+  const suggestions = [
+    { label: "Check Menu", text: "Show me the product menu" },
+    { label: "How to Pay?", text: "How can I pay for my order?" },
+    { label: "Delivery info", text: "What are the delivery charges for Yankin?" }
+  ];
+
+  // Sync internal session with prop if not public
+  useEffect(() => {
+    if (!isPublic) {
+      setSession(initialSession);
+    }
+  }, [initialSession, isPublic]);
+
+  // Polling for public session updates
+  useEffect(() => {
+    if (!isPublic || !shopId) return;
+
+    let publicSessionId = localStorage.getItem(`shop_session_${shopId}`);
+    if (!publicSessionId) {
+      publicSessionId = `pub_${Math.random().toString(36).substring(2, 11)}`;
+      localStorage.setItem(`shop_session_${shopId}`, publicSessionId);
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke("shop", {
+          body: { action: "get-state", shopId }
+        });
+        if (!error && data) {
+          // Find the session for this user
+          const sessions = data.sessions || {};
+          const mySession = Object.values(sessions).find((s: any) => s.sessionId === publicSessionId);
+          if (mySession) {
+            setSession(mySession as TelegramSession);
+          } else if (!session) {
+            // Create initial session object if none exists yet
+            setSession({
+              sessionId: publicSessionId!,
+              customerName: "Public Customer",
+              customerPhone: "",
+              customerTelegramId: `web_${publicSessionId}`,
+              messages: [],
+              lastActive: new Date().toISOString(),
+              currentStep: "greeting",
+              cart: [],
+              liveTakeoverActive: false
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Polling error:", err);
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [isPublic, shopId]);
+
   // Auto-scroll chat to latest messages
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && session) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [session.messages]);
-
-  // Quick action suggested inputs
-  const suggestions = [
-    { label: "Mingalabar Candy!", text: "Mingalabar Candy! I want to browse products today." },
-    { label: "Add Pathein Halawa", text: "I want to add 1 Pathein Halawa to my bag, please!" },
-    { label: "Do you have Royal Tea?", text: "Is the Royal Myanmar Tea pack available?" },
-    { label: "Talk to a Human", text: "I want to talk to a human customer agent" }
-  ];
-
-  // Helper mock screenshot assets
-  const mockReceipts = [
-    { name: "KPay Green Ticket", url: "https://images.unsplash.com/photo-1559526324-4b87b5e36e44?auto=format&fit=crop&q=80&w=200" },
-    { name: "Wavepay Screen Transfer", url: "https://images.unsplash.com/photo-1616077168079-7e09a677fb2c?auto=format&fit=crop&q=80&w=200" }
-  ];
+  }, [session?.messages]);
 
   const handleSendMessage = async (customText?: string) => {
     const textToSend = customText || inputText;
@@ -57,25 +112,37 @@ export function TelegramSimulator({
 
     setLoading(true);
     try {
-      const response = await fetch("/api/bot/simulate-input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      let currentSessionId = session?.sessionId || localStorage.getItem(`shop_session_${shopId}`) || "default";
+
+      if (isPublic && shopId) {
+        const { data, error } = await supabase.functions.invoke("shop", {
+          body: {
+            action: "chat",
+            shopId,
+            sessionId: currentSessionId,
+            content: textToSend,
+            base64Image: finalImage || undefined,
+            transactionId: txIdInput || undefined,
+            payMethod: selectedPayMethod,
+          }
+        });
+        if (error) throw error;
+        if (data.session) setSession(data.session);
+      } else if (session) {
+        botSimulateInput({
           sessionId: session.sessionId,
           content: textToSend,
           base64Image: finalImage || undefined,
           transactionId: txIdInput || undefined,
-          payMethod: selectedPayMethod
-        })
-      });
-
-      if (response.ok) {
-        setInputText("");
-        setTxIdInput("");
-        setMockScreenshotBase64(null);
-        setCustomAttachBase64(null);
-        onStateUpdated();
+          payMethod: selectedPayMethod,
+        });
       }
+
+      setInputText("");
+      setTxIdInput("");
+      setMockScreenshotBase64(null);
+      setCustomAttachBase64(null);
+      onStateUpdated();
     } catch (err) {
       console.error(err);
     } finally {
@@ -84,20 +151,29 @@ export function TelegramSimulator({
   };
 
   const handleCheckoutPath = async (option: "prepay" | "cod") => {
+    if (!session) return;
     setLoading(true);
     try {
-      const response = await fetch("/api/bot/simulate-input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      if (isPublic && shopId) {
+        const { data, error } = await supabase.functions.invoke("shop", {
+          body: {
+            action: "chat",
+            shopId,
+            sessionId: session.sessionId,
+            checkoutOption: option,
+            payMethod: option === "prepay" ? "KPay" : "CoD",
+          }
+        });
+        if (error) throw error;
+        if (data.session) setSession(data.session);
+      } else {
+        botSimulateInput({
           sessionId: session.sessionId,
           checkoutOption: option,
-          payMethod: option === 'prepay' ? 'KPay' : 'CoD'
-        })
-      });
-      if (response.ok) {
-        onStateUpdated();
+          payMethod: option === "prepay" ? "KPay" : "CoD",
+        });
       }
+      onStateUpdated();
     } catch (err) {
       console.error(err);
     } finally {
@@ -106,20 +182,29 @@ export function TelegramSimulator({
   };
 
   const handleTownshipSelection = async (town: string, payMethodSelected: 'cod' | 'prepay') => {
+    if (!session) return;
     setLoading(true);
     try {
-      const response = await fetch("/api/bot/simulate-input", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      if (isPublic && shopId) {
+        const { data, error } = await supabase.functions.invoke("shop", {
+          body: {
+            action: "chat",
+            shopId,
+            sessionId: session.sessionId,
+            township: town,
+            payMethod: payMethodSelected,
+          }
+        });
+        if (error) throw error;
+        if (data.session) setSession(data.session);
+      } else {
+        botSimulateInput({
           sessionId: session.sessionId,
           township: town,
-          payMethod: payMethodSelected
-        })
-      });
-      if (response.ok) {
-        onStateUpdated();
+          payMethod: payMethodSelected,
+        });
       }
+      onStateUpdated();
     } catch (err) {
       console.error(err);
     } finally {
@@ -139,14 +224,26 @@ export function TelegramSimulator({
   return (
     <div className="w-full max-w-sm mx-auto flex flex-col h-[670px] bg-slate-950 border-4 border-slate-800 rounded-[38px] shadow-2xl relative overflow-hidden ring-4 ring-slate-900/40">
       
-      {/* Phone Notch/Speaker Header */}
-      <div className="absolute top-0 inset-x-0 h-6 bg-slate-950 flex items-center justify-center z-40">
-        <div className="w-24 h-4 bg-slate-900 rounded-b-xl flex items-center justify-between px-3">
-          <div className="w-2 h-2 rounded-full bg-slate-800"></div>
-          <div className="w-10 h-1 bg-slate-950 rounded-full"></div>
-          <div className="w-1.5 h-1.5 rounded-full bg-indigo-500/80"></div>
+      {!session ? (
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center space-y-4">
+          <div className="w-16 h-16 rounded-full bg-slate-900 flex items-center justify-center text-2xl">💤</div>
+          <div className="space-y-2">
+            <h3 className="text-sm font-bold text-slate-200">No Active Sessions</h3>
+            <p className="text-[10px] text-slate-500 leading-relaxed">
+              When a customer messages your bot on Telegram, their chat will appear here for you to simulate and monitor.
+            </p>
+          </div>
         </div>
-      </div>
+      ) : (
+        <>
+          {/* Phone Notch/Speaker Header */}
+          <div className="absolute top-0 inset-x-0 h-6 bg-slate-950 flex items-center justify-center z-40">
+            <div className="w-24 h-4 bg-slate-900 rounded-b-xl flex items-center justify-between px-3">
+              <div className="w-2 h-2 rounded-full bg-slate-800"></div>
+              <div className="w-10 h-1 bg-slate-950 rounded-full"></div>
+              <div className="w-1.5 h-1.5 rounded-full bg-indigo-500/80"></div>
+            </div>
+          </div>
 
       {/* Telegram Status Bar */}
       <div className="pt-6 px-5 pb-2 bg-slate-900 border-b border-slate-800 flex items-center justify-between text-[11px] text-slate-400 font-mono z-30">
@@ -380,11 +477,11 @@ export function TelegramSimulator({
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
               {deliveryZones.map((zone) => (
                 <button
-                  key={zone.township}
-                  onClick={() => handleTownshipSelection(zone.township, 'prepay')}
+                  key={zone.id}
+                  onClick={() => handleTownshipSelection(zone.township_name, 'prepay')}
                   className="bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/30 text-emerald-300 text-[10px] px-2.5 py-1 rounded-full whitespace-nowrap cursor-pointer flex items-center gap-1"
                 >
-                  <MapPin size={10} /> {zone.township} (+{zone.rate} MMK)
+                  <MapPin size={10} /> {zone.township_name} (+{zone.rate} MMK)
                 </button>
               ))}
             </div>
@@ -542,7 +639,7 @@ export function TelegramSimulator({
 
         <input
           type="text"
-          placeholder={session.liveTakeoverActive ? "Direct message as Customer..." : "Type custom inquiries in Burmese/English..."}
+          placeholder={session?.liveTakeoverActive ? "Direct message as Customer..." : "Type custom inquiries in Burmese/English..."}
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
           onKeyDown={(e) => {
@@ -558,6 +655,8 @@ export function TelegramSimulator({
           <Send size={12} />
         </button>
       </div>
+    </>
+    )}
 
     </div>
   );

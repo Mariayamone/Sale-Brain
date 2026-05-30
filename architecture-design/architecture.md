@@ -1,170 +1,367 @@
 # Architecture Overview
-This document serves as a critical, living template designed to equip agents with a rapid and comprehensive understanding of the codebase's architecture, enabling efficient navigation and effective contribution from day one. Update this document as the codebase evolves.
+
+> **Project:** Sales Brain AI - AI-Powered Telegram Commerce Bot
+> **Last Updated:** 2025-05-28
+
+This document provides a comprehensive overview of the Sales Brain AI codebase architecture. It serves as a reference for developers and AI agents to understand the system design, make informed decisions, and contribute effectively.
+
+---
 
 ## 1. Project Structure
-This section provides a high-level overview of the project's directory and file structure, categorised by architectural layer or major functional area. It is essential for quickly navigating the codebase, locating relevant files, and understanding the overall organization and separation of concerns.
 
-
+```
 [Project Root]/
-├── backend/              # Contains all server-side code and APIs
-│   ├── src/              # Main source code for backend services
-│   │   ├── api/          # API endpoints and controllers
-│   │   ├── client/       # Business logic and service implementations
-│   │   ├── models/       # Database models/schemas
-│   │   └── utils/        # Backend utility functions
-│   ├── config/           # Backend configuration files
-│   ├── tests/            # Backend unit and integration tests
-│   └── Dockerfile        # Dockerfile for backend deployment
-├── frontend/             # Contains all client-side code for user interfaces
-│   ├── src/              # Main source code for frontend applications
-│   │   ├── components/   # Reusable UI components
-│   │   ├── pages/        # Application pages/views
-│   │   ├── assets/       # Images, fonts, and other static assets
-│   │   ├── services/     # Frontend services for API interaction
-│   │   └── store/        # State management (e.g., Redux, Vuex, Context API)
-│   ├── public/           # Publicly accessible assets (e.g., index.html)
-│   ├── tests/            # Frontend unit and E2E tests
-│   └── package.json      # Frontend dependencies and scripts
-├── common/               # Shared code, types, and utilities used by both frontend and backend
-│   ├── types/            # Shared TypeScript/interface definitions
-│   └── utils/            # General utility functions
-├── docs/                 # Project documentation (e.g., API docs, setup guides)
-├── scripts/              # Automation scripts (e.g., deployment, data seeding)
-├── .github/              # GitHub Actions or other CI/CD configurations
-├── .gitignore            # Specifies intentionally untracked files to ignore
-├── README.md             # Project overview and quick start guide
-└── ARCHITECTURE.md       # This document
+├── server.ts              # Express backend + Vite SSR server (monolithic)
+├── src/                   # React frontend source
+│   ├── App.tsx            # Main React app entry (~110KB, primary UI)
+│   ├── main.tsx           # React DOM renderer
+│   ├── index.css          # Tailwind CSS entry
+│   ├── types.ts           # TypeScript interfaces (SystemState, Product, Order, etc.)
+│   ├── components/        # React components
+│   │   ├── Onboarding.tsx          # Multi-step shop setup wizard (767 lines)
+│   │   ├── SmartMarketing.tsx       # AI marketing campaign generator
+│   │   ├── TelegramSimulator.tsx   # Telegram bot UI simulator
+│   │   └── CustomChart.tsx          # Data visualization components
+│   └── utils/
+│       └── supabase.ts    # Supabase client (future DB integration)
+├── .agents/               # AI agent instructions and skills
+├── architecture-design/   # Architecture documentation
+├── decision-log/          # Architectural Decision Records (ADRs)
+├── sales_brain_state.json # Persistent state file (JSON)
+├── package.json           # Dependencies: React 19, Vite, Express, Gemini API
+├── vite.config.ts         # Vite + React configuration
+└── tsconfig.json          # TypeScript configuration
+```
 
-
+---
 
 ## 2. High-Level System Diagram
-Provide a simple block diagram (e.g., a C4 Model Level 1: System Context diagram, or a basic component diagram) or a clear text-based description of the major components and their interactions. Focus on how data flows, services communicate, and key architectural boundaries.
- 
-[User] <--> [Frontend Application] <--> [Backend Service 1] <--> [Database 1]
-                                    |
-                                    +--> [Backend Service 2] <--> [External API]                           
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        User (Browser)                           │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTPS
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                 Express Server (server.ts)                       │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────┐  │
+│  │ API Endpoints   │  │ Vite SSR Middleware │ │ Static Files  │  │
+│  │ /api/*          │  │ (dev mode)       │  │ /assets       │  │
+│  └────────┬────────┘  └────────┬────────┘  └───────┬────────┘  │
+└───────────┼──────────────────────┼────────────────────┼───────────┘
+            │                      │                    │
+            ▼                      ▼                    ▼
+┌──────────────────┐    ┌──────────────────┐    ┌────────────────┐
+│   Gemini AI      │    │  File System     │    │   Supabase     │
+│   (@google/genai)│    │  (state JSON)    │    │   (Optional)   │
+│   - Bot logic    │    │  - Products      │    │   - Future     │
+│   - Responses    │    │  - Orders        │    │     DB layer   │
+│   - Cart handling│    │  - Sessions      │    │                │
+└──────────────────┘    └──────────────────┘    └────────────────┘
+            │
+            ▼
+┌──────────────────┐
+│   Telegram       │
+│   Bot (External)  │
+│   - User messages│
+│   - Live takeover │
+└──────────────────┘
+```
+
+---
 
 ## 3. Core Components
-(List and briefly describe the main components of the system. For each, include its primary responsibility and key technologies used.)
 
-### 3.1. Frontend
+### 3.1 Frontend - React Application
 
-Name: [e.g., Web App, Mobile App]
+**Name:** Sales Brain AI Web Dashboard
 
-Description: Briefly describe its primary purpose, key functionalities, and how users or other systems interact with it. E.g., 'The main user interface for interacting with the system, allowing users to manage their profiles, view data dashboards, and initiate workflows.'
+**Description:** A React 19 dashboard for shop owners to configure their Telegram commerce bot, view orders, manage products, and create AI-powered marketing campaigns. Features a multi-step onboarding wizard, real-time order tracking, and Telegram chat simulator.
 
-Technologies: [e.g., React, Next.js, Vue.js, Swift/Kotlin, HTML/CSS/JS]
+**Key Features:**
+- Multi-step onboarding wizard for shop configuration
+- Product catalog management (CRUD)
+- Order management with status tracking
+- Telegram bot simulator for testing
+- AI-powered marketing campaign generator (via Gemini)
+- Data visualization with custom charts
+- Localization support (English / Burmese)
 
-Deployment: [e.g., Vercel, Netlify, S3/CloudFront]
+**Technologies:**
+- React 19 (with TypeScript)
+- Vite (build tool + dev server)
+- Tailwind CSS 4
+- Motion (animation library, formerly Framer Motion)
+- Lucide React (icons)
+- @supabase/supabase-js (client ready)
 
-### 3.2. Backend Services
+**Deployment:** Local development with `npm run dev`
 
-(Repeat for each significant backend service. Add more as needed.)
+### 3.2 Backend - Express Server
 
-#### 3.2.1. [Service Name 1]
+**Name:** Sales Brain API Server
 
-Name: [e.g., User Management Service, Data Processing API]
+**Description:** A monolithic Express.js server embedded in `server.ts` that handles API requests, serves the React frontend, and manages system state. Integrates with Google Gemini API for AI-powered bot responses.
 
-Description: [Briefly describe its purpose, e.g., "Handles user authentication and profile management."]
+**Key Features:**
+- RESTful API endpoints for state management
+- Vite SSR middleware for development
+- File-based state persistence
+- Gemini AI integration for natural language processing
+- Telegram bot webhook handlers (ready for integration)
 
-Technologies: [e.g., Node.js (Express), Python (Django/Flask), Java (Spring Boot), Go]
+**Technologies:**
+- Express.js 4.x
+- Google Generative AI SDK (@google/genai)
+- Node.js built-in modules (fs, path)
+- dotenv (environment configuration)
 
-Deployment: [e.g., AWS EC2, Kubernetes, Serverless (Lambda/Cloud Functions)]
+**Endpoint Examples:**
+- `GET /api/state` - Get full system state
+- `POST /api/products` - Add new product
+- `POST /api/orders` - Create new order
+- `POST /api/ai/chat` - Send message to Gemini AI
 
-#### 3.2.2. [Service Name 2]
-
-Name: [e.g., Analytics Service, Notification Service]
-
-Description: [Briefly describe its purpose.]
-
-Technologies: [e.g., Python, Kafka, Redis]
-
-Deployment: [e.g., AWS ECS, Google Cloud Run]
+---
 
 ## 4. Data Stores
 
-(List and describe the databases and other persistent storage solutions used.)
+### 4.1 Primary State Storage
 
-### 4.1. [Data Store Type 1]
+**Name:** Sales Brain State File
 
-Name: [e.g., Primary User Database, Analytics Data Warehouse]
+**Type:** JSON file (`sales_brain_state.json`)
 
-Type: [e.g., PostgreSQL, MongoDB, Redis, S3, Firestore]
+**Purpose:** Stores all application state including shop configuration, products, delivery zones, orders, and Telegram sessions. Acts as the primary database in the current implementation.
 
-Purpose: [Briefly describe what data it stores and why.]
+**Key Schema:**
 
-Key Schemas/Collections: [List important tables/collections, e.g., users, products, orders (no need for full schema, just names)]
+```typescript
+interface SystemState {
+  config: ShopConfig;
+  products: Product[];
+  deliveryZones: DeliveryZone[];
+  orders: Order[];
+  sessions: { [id: string]: TelegramSession };
+}
 
-### 4.2. [Data Store Type 2]
+interface ShopConfig {
+  shopName: string;
+  ownerName: string;
+  phone: string;
+  currency: string;
+  telegramBotToken: string;
+  telegramBotUsername: string;
+  messengerPageAccessToken: string;
+  messengerVerifyToken: string;
+  messengerBotId: string;
+  messengerBotName: string;
+  onboardingCompleted: boolean;
+}
 
-Name: [e.g., Cache, Message Queue]
+interface Product {
+  id: string;
+  name: string;
+  category: string;
+  price: number; // in MMK (Myanmar Kyat)
+  description: string;
+  stock: number;
+  image: string;
+}
 
-Type: [e.g., Redis, Kafka, RabbitMQ]
+interface Order {
+  id: string;
+  invoiceId: string;
+  customerName: string;
+  customerPhone: string;
+  customerTelegramId: string;
+  township: string;
+  addressDetails?: string;
+  deliveryFee: number;
+  paymentMethod: 'cod' | 'prepay';
+  totalAmount: number;
+  status: 'pending' | 'verifying' | 'confirmed' | 'completed' | 'cancelled';
+  items: OrderItem[];
+  paymentDetails?: PaymentDetails;
+  createdAt: string;
+}
 
-Purpose: [Briefly describe its purpose, e.g., "Used for caching frequently accessed data" or "Inter-service communication."]
+interface TelegramSession {
+  sessionId: string;
+  customerName: string;
+  customerPhone: string;
+  customerTelegramId: string;
+  messages: ChatMessage[];
+  lastActive: string;
+  currentStep: SessionStep;
+  cart: CartItem[];
+  liveTakeoverActive: boolean;
+  activeOrderId?: string;
+}
+
+type SessionStep = 'greeting' | 'browsing' | 'ordering' | 'selecting_township' | 
+                   'selecting_payment' | 'prepayment_pending' | 'verifying' | 
+                   'completed' | 'live_takeover';
+```
+
+### 4.2 Cache Layer (Future)
+
+**Name:** Supabase (Reserved for Future)
+
+**Type:** PostgreSQL via Supabase
+
+**Purpose:** Reserved for future database migration. The `src/utils/supabase.ts` client is ready for integration when scaling beyond file-based persistence.
+
+---
 
 ## 5. External Integrations / APIs
 
-(List any third-party services or external APIs the system interacts with.)
+### 5.1 Google Gemini AI
 
-Service Name 1: [e.g., Stripe, SendGrid, Google Maps API]
+**Service:** Google Generative AI (Gemini 2.4.0)
 
-Purpose: [Briefly describe its function, e.g., "Payment processing."]
+**Purpose:** Powers the AI-powered Telegram bot that handles:
+- Natural language product queries
+- Cart management through conversation
+- Order processing automation
+- Marketing campaign generation
 
-Integration Method: [e.g., REST API, SDK]
+**Integration Method:** Official SDK (`@google/genai`)
+
+**Example Usage:**
+```typescript
+import { GoogleGenAI, Type } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const response = await ai.models.generateContent({
+  model: "gemini-2.0-flash",
+  contents: [{ role: "user", parts: [{ text: userMessage }] }],
+});
+```
+
+### 5.2 Telegram Bot API (Ready)
+
+**Service:** Telegram Bot API
+
+**Purpose:** Enables the shop to communicate with customers via Telegram. The system is designed to integrate with Telegram webhooks.
+
+**Integration Method:** Bot Token + Webhook endpoints
+
+### 5.3 Supabase (Reserved)
+
+**Service:** Supabase
+
+**Purpose:** Future backend-as-a-service for database, authentication, and real-time subscriptions.
+
+**Integration Method:** `@supabase/supabase-js` client (already in dependencies)
+
+---
 
 ## 6. Deployment & Infrastructure
 
-Cloud Provider: [e.g., AWS, GCP, Azure, On-premise]
+**Development Environment:**
+- Local machine: `npm run dev` starts both Express backend and Vite frontend
+- Build: `npm run build` compiles Vite app and creates production server bundle
+- Start: `npm run start` runs the compiled Express server
 
-Key Services Used: [e.g., EC2, Lambda, S3, RDS, Kubernetes, Cloud Functions, App Engine]
+**Key Commands:**
+```bash
+npm install     # Install dependencies
+npm run dev     # Development mode (tsx hot reload)
+npm run build   # Production build
+npm run start   # Run production server
+npm run lint    # TypeScript type checking
+```
 
-CI/CD Pipeline: [e.g., GitHub Actions, GitLab CI, Jenkins, CircleCI]
-
-Monitoring & Logging: [e.g., Prometheus, Grafana, CloudWatch, Stackdriver, ELK Stack]
+---
 
 ## 7. Security Considerations
 
-(Highlight any critical security aspects, authentication mechanisms, or data encryption practices.)
+**Current Implementation:**
+- Environment variables via `dotenv` (`.env` file not committed)
+- No authentication on API endpoints (local development)
+- No encryption on state file (JSON plaintext)
 
-Authentication: [e.g., OAuth2, JWT, API Keys]
+**Recommendations for Production:**
+- Add JWT/Session authentication
+- Implement API rate limiting
+- Enable HTTPS/TLS
+- Consider database encryption via Supabase
+- Add input validation (Zod recommended)
 
-Authorization: [e.g., RBAC, ACLs]
+---
 
-Data Encryption: [e.g., TLS in transit, AES-256 at rest]
+## 8. Development & Testing
 
-Key Security Tools/Practices: [e.g., WAF, regular security audits]
+**Local Setup:**
+1. Clone repository
+2. Run `npm install`
+3. Create `.env` file with required API keys:
+   ```
+   GEMINI_API_KEY=your_gemini_api_key
+   ```
+4. Run `npm run dev`
+5. Access at http://localhost:3000
 
-## 8. Development & Testing Environment
+**Testing:**
+- TypeScript type checking: `npm run lint`
+- Manual testing via browser at localhost:3000
 
-Local Setup Instructions: [Link to CONTRIBUTING.md or brief steps]
+**Code Quality:**
+- ESLint (via Vite)
+- TypeScript strict mode
+- Prettier (config in vite.config.ts)
 
-Testing Frameworks: [e.g., Jest, Pytest, JUnit]
-
-Code Quality Tools: [e.g., ESLint, Black, SonarQube]
+---
 
 ## 9. Future Considerations / Roadmap
 
-(Briefly note any known architectural debts, planned major changes, or significant future features that might impact the architecture.)
+### Near-term:
+- [ ] Supabase database integration (replace file-based state)
+- [ ] Telegram Bot API webhook integration
+- [ ] User authentication for dashboard
+- [ ] Real-time order updates via WebSocket/Supabase Realtime
 
-[e.g., "Migrate from monolith to microservices."]
+### Long-term:
+- [ ] Microservices separation (Auth, Orders, Products, AI)
+- [ ] Multi-shop support (SaaS)
+- [ ] Mobile app (React Native)
+- [ ] Payment gateway integration (KBPay, WavePay, etc.)
 
-[e.g., "Implement event-driven architecture for real-time updates."]
+---
 
 ## 10. Project Identification
 
-Project Name: [Insert Project Name]
+**Project Name:** Sales Brain AI
 
-Repository URL: [Insert Repository URL]
+**Repository:** (Local repository)
 
-Primary Contact/Team: [Insert Lead Developer/Team Name]
+**Primary Purpose:** AI-powered Telegram commerce bot that enables Myanmar businesses to sell products via Telegram with AI-assisted customer service
 
-Date of Last Update: [YYYY-MM-DD]
+**Primary Tech Stack:**
+- Frontend: React 19, Vite, Tailwind CSS 4, Motion
+- Backend: Express.js, Node.js
+- AI: Google Gemini API
+- Database: File-based JSON (current) / Supabase (future)
+
+---
 
 ## 11. Glossary / Acronyms
 
-Define any project-specific terms or acronyms.)
+| Acronym | Full Definition |
+|---------|-----------------|
+| **RSC** | React Server Component (not used in this project - client-side React only) |
+| **SSR** | Server-Side Rendering (Vite dev mode) |
+| **MMK** | Myanmar Kyat (currency) |
+| **CoD** | Cash on Delivery |
+| **AI** | Artificial Intelligence |
+| **Gemini** | Google Generative AI model |
+| **ADR** | Architectural Decision Record |
+| **SKU** | Stock Keeping Unit |
+| **Telegram Session** | Conversation state between a customer and the bot |
 
-[Acronym]: [Full Definition]
+---
 
-[Term]: [Explanation]
+*Maintained by: Development Team*
+*Last Updated: 2025-05-28*

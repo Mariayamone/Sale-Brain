@@ -25,14 +25,32 @@ import {
   ExternalLink,
   Smartphone,
   Languages,
-  Send
+  Send,
+  Copy
 } from "lucide-react";
 
 import { CustomChart } from "./components/CustomChart";
 import { TelegramSimulator } from "./components/TelegramSimulator";
 import { SmartMarketing } from "./components/SmartMarketing";
 import { Onboarding } from "./components/Onboarding";
+import { LandingPage } from "./components/LandingPage";
+import { AuthPage } from "./components/auth/AuthPage";
+import { PublicShop } from "./components/PublicShop";
+import { useAuth } from "./contexts/AuthContext";
+import { invokeApi } from "./services/api";
+import { getShopState, saveShopState } from "./services/shopState";
+import {
+  emptyOnboardingForm,
+  getShopForOwner,
+  shopRecordToFormData,
+} from "./services/shopRecord";
+import { getProducts, migrateProductsFromJson, upsertProduct, deleteProduct } from "./services/productService";
+import type { OnboardingFormState, ShopRecord } from "./types";
 import { Product, DeliveryZone, Order, ShopConfig, TelegramSession, SystemState } from "./types";
+import * as store from "./services/clientStore";
+import { supabase } from "./utils/supabase";
+import { fetchDeliveryMatrix, addDeliveryZone, deleteDeliveryZone } from "./services/deliveryMatrixApi";
+import { buildShopPublicUrl } from "./utils/shopId";
 
 // Complete localized dictionary for total English & Burmese translation sync
 const dict = {
@@ -123,10 +141,16 @@ const dict = {
     storeNameLabel: "Store Name:",
     smeOwnerNameLabel: "SME Owner Name:",
     contactPhoneLabel: "Contact Phone Number:",
-    customBotTokenLabel: "Custom Bot Token ID:",
-    setViaBotFather: "Set via @BotFather",
     telegramBotUsernameLabel: "Telegram Bot Username (@):",
     saveStoreSettingsBtn: "SAVE STORE SETTINGS AND ACTIVATED TELEGRAM VIRTUAL DEPLOY",
+    messengerBotActivationWorkspace: "MESSENGER BOT ACTIVATION WORKSPACE",
+    connectMessengerBot: "Connect Messenger Bot",
+    connectFacebookPage: "Connect Messenger Bot",
+    signInFacebookFirst: "Sign in with Facebook to link your business Page, then choose which Page should run the Messenger bot.",
+    oauthCompleteChoosePage: "Facebook sign-in complete. Select the Page you want to use for Messenger:",
+    activateMessengerBot: "Activate Messenger Bot",
+    selectPageLabel: "Choose your Facebook Page:",
+    disconnectFacebook: "Disconnect Messenger Bot",
     liveSupportRoomHeader: "SME CRM LIVE SUPPORT ROOM",
     chatTakeoverDesc: "",
     activeUserSessionsLabel: "ACTIVE USER SESSIONS:",
@@ -248,10 +272,16 @@ const dict = {
     storeNameLabel: "ဆိုင်အမည် -",
     smeOwnerNameLabel: "ဆိုင်ရှင်အမည် -",
     contactPhoneLabel: "ဆက်သွယ်ရန် ဖုန်းနံပါတ် -",
-    customBotTokenLabel: "ရရှိထားသော တယ်လီဂရမ် Bot သော့ချက် (Token ID) -",
-    setViaBotFather: "တယ်လီဂရမ် @BotFather တွင် ရယူပါ",
     telegramBotUsernameLabel: "တယ်လီဂရမ် Bot ယူဇာနိမ်း (@) -",
     saveStoreSettingsBtn: "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီး တယ်လီဂရမ်နှင့် ချိတ်ဆက်မည်",
+    messengerBotActivationWorkspace: "မက်ဆင်ဂျာ ဘော့တ် ချိတ်ဆက်မှု စနစ်",
+    connectMessengerBot: "Messenger ဘော့တ် ချိတ်ဆက်ရန်",
+    connectFacebookPage: "Messenger ဘော့တ် ချိတ်ဆက်ရန်",
+    signInFacebookFirst: "Facebook ဖြင့် ဝင်ရောက်ပြီး သင့် Page ကို ရွေးချယ်ပါ။ Messenger ဘော့တ်အတွက် မည်သည့် Page သုံးမည်ကို ရွေးပါ။",
+    oauthCompleteChoosePage: "Facebook ဝင်ရောက်မှု အောင်မြင်ပါပြီ။ Messenger အတွက် Page ရွေးချယ်ပါ:",
+    activateMessengerBot: "Messenger ဘော့တ် စတင်အသုံးပြုရန်",
+    selectPageLabel: "သင်၏ Facebook Page ကို ရွေးချယ်ပါ -",
+    disconnectFacebook: "Facebook Page ချိတ်ဆက်မှု ဖြတ်ရန်",
     liveSupportRoomHeader: "ဆိုင်ရှင် တိုက်ရိုက် ဝယ်သူစကားပြောခန်း (CRM)",
     chatTakeoverDesc: "",
     activeUserSessionsLabel: "လက်ရှိ စကားပြောနေဆဲ ဝယ်သူများ -",
@@ -289,22 +319,47 @@ const dict = {
 };
 
 export default function App() {
+  const { user, loading: authLoading, signOut } = useAuth();
   const [lang, setLang] = useState<"en" | "my">("en");
+  const [showLandingPage, setShowLandingPage] = useState<boolean>(() => {
+    const stored = localStorage.getItem('sales_brain_visited');
+    return stored !== 'true';
+  });
   const [showSimulator, setShowSimulator] = useState<boolean>(false);
-  const [botConnectionTab, setBotConnectionTab] = useState<"telegram" | "messenger">("telegram");
+
+  // Simple routing for public shop view
+  const shopMatch = window.location.pathname.match(/\/shop\/([^\/]+)/);
+  const publicShopId = shopMatch ? shopMatch[1] : null;
+
+  if (publicShopId) {
+    return <PublicShop shopId={publicShopId} />;
+  }
 
   // Helper dictionary access
-  const t = (key: keyof typeof dict['en']) => {
+  const t = (key: keyof typeof dict['en']): any => {
     return dict[lang][key] || dict['en'][key];
   };
 
   // Main Store State
   const [storeState, setStoreState] = useState<SystemState | null>(null);
   const [activeTab, setActiveTab] = useState<"orders" | "products" | "delivery" | "insights" | "bot_config" | "live_support" | "smart_marketing">("orders");
+  const [botConnectionTab, setBotConnectionTab] = useState<"messenger" | "telegram">("messenger");
   const [activeSessionId, setActiveSessionId] = useState<string>("default_customer");
+
+  // Onboarding / Config Draft state
+  const [shopRecord, setShopRecord] = useState<ShopRecord | null>(null);
+  const [editingOnboarding, setEditingOnboarding] = useState(false);
   const [configDraft, setConfigDraft] = useState<ShopConfig | null>(null);
-  const [messengerStatus, setMessengerStatus] = useState<{ connected: boolean; pages: any[] } | null>(null);
+  const [messengerStatus, setMessengerStatus] = useState<{
+    connected: boolean;
+    oauth_completed?: boolean;
+    pending_page_selection?: boolean;
+    pages: { id: string; name: string }[];
+    active_page_id?: string | null;
+    error?: string;
+  } | null>(null);
   const [loadingMessengerStatus, setLoadingMessengerStatus] = useState<boolean>(false);
+  const [pendingPageId, setPendingPageId] = useState<string>("");
 
   // Loaders
   const [loading, setLoading] = useState<boolean>(true);
@@ -315,93 +370,284 @@ export default function App() {
   // Forms / Input Dialogs State
   const [showProductModal, setShowProductModal] = useState<boolean>(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [showNotification, setShowNotification] = useState<{ text: string; type: "success" | "info" } | null>(null);
+  const [showNotification, setShowNotification] = useState<{ text: string; type: "success" | "info" | "error" } | null>(null);
+  const [copiedConfigLink, setCopiedConfigLink] = useState<boolean>(false);
 
   // New Product Form state
   const [prodForm, setProdForm] = useState({
     name: "",
-    category: "Desserts",
     price: 4500,
     description: "",
     stock: 25,
-    image: ""
+    image: "",
+    varies: [] as { key: string; value: string }[],
+    is_on_demand: false,
+    waiting_time: ""
   });
 
   // New Zone Form state
   const [newZone, setNewZone] = useState({
-    township: "",
+    township_name: "",
+    region: "",
+    division: "",
     rate: 2000,
-    deliveryTime: "1-2 Days"
+    estimated_transit_timeline: "1-2 Days"
+  });
+
+  // Delivery zones from API
+  const [deliveryZones, setDeliveryZones] = useState<DeliveryZone[]>([]);
+  const [deliveryZonesLoading, setDeliveryZonesLoading] = useState(false);
+  const [deliveryZonesPage, setDeliveryZonesPage] = useState(1);
+  const [deliveryZonesSearch, setDeliveryZonesSearch] = useState("");
+  const [deliveryZonesPagination, setDeliveryZonesPagination] = useState({
+    total_records: 0,
+    current_page: 1,
+    limit: 10,
+    total_pages: 0,
+    has_next: false,
+    has_prev: false
   });
 
   // Owner custom live reply states
   const [ownerReplyText, setOwnerReplyText] = useState<string>("");
   const [activeVerificationReceipt, setActiveVerificationReceipt] = useState<Order | null>(null);
 
-  // Fetch current platform state from Express backend
+  // Fetch shop state from Supabase Storage
   const fetchState = async (silent = false) => {
+    if (!user) return;
     if (!silent) setLoading(true);
     try {
-      const response = await fetch("/api/state");
-      if (response.ok) {
-        const contentType = response.headers.get("Content-Type") || "";
-        if (!contentType.includes("application/json")) {
-          return;
-        }
-        const data: SystemState = await response.json();
-        setStoreState(data);
-        // If user is not currently editing bot config, keep draft synced.
-        setConfigDraft((prev) => {
-          if (activeTab === "bot_config" && prev) return prev;
-          return data.config;
-        });
-        if (data.sessions && Object.keys(data.sessions).length > 0) {
-          const keys = Object.keys(data.sessions);
-          if (!keys.includes(activeSessionId)) {
-            setActiveSessionId(keys[0]);
+      // 1. Fetch JSON state from storage
+      const data = await getShopState(user.id);
+      
+      // 2. Sync shop row from Postgres (source of truth for onboarding)
+      try {
+        const shopRow = await getShopForOwner(user.id);
+        if (shopRow) {
+          setShopRecord(shopRow);
+          data.config.onboardingCompleted = shopRow.onboarding_completed;
+          if (shopRow.shop_id) {
+            data.config.shopId = shopRow.shop_id;
+          } else {
+            // Fallback for legacy shopId during migration
+            const { data: legacy } = await supabase
+              .from('business_onboarding')
+              .select('shop_id')
+              .eq('user_id', user.id)
+              .maybeSingle();
+            if (legacy?.shop_id) {
+              data.config.shopId = legacy.shop_id;
+            }
           }
+          if (shopRow.shop_name) {
+            data.config.shopName = shopRow.shop_name;
+          }
+          if (shopRow.owner_name) {
+            data.config.ownerName = shopRow.owner_name;
+          }
+          const shopPhone =
+            shopRow.phone?.trim() ||
+            shopRow.onboarding_profile?.phone?.trim() ||
+            "";
+          if (shopPhone) {
+            data.config.phone = shopPhone;
+          }
+        } else {
+          setShopRecord(null);
+        }
+      } catch (dbError) {
+        console.warn("Shop fetch error:", dbError);
+      }
+
+      // 3. Migrate products from JSON to table if needed
+      if (data.products && data.products.length > 0 && !data.config.productsMigrated) {
+        const result = await migrateProductsFromJson(user.id, data.products);
+        if (result.success) {
+          data.products = [];
+          data.config.productsMigrated = true;
+          await saveShopState(user.id, data);
+        }
+      }
+
+      // 4. Fetch products from table
+      const products = await getProducts(user.id);
+      data.products = products;
+
+      // 5. Update states ONLY after all sync logic is done
+      setStoreState(data);
+
+      setConfigDraft((prev) => {
+        if (activeTab === "bot_config" && prev) return prev;
+        return data.config;
+      });
+      if (data.sessions && Object.keys(data.sessions).length > 0) {
+        const keys = Object.keys(data.sessions);
+        if (!keys.includes(activeSessionId)) {
+          setActiveSessionId(keys[0]);
         }
       }
     } catch (err) {
-      console.debug("Background poll err (silent):", err);
+      console.debug("State load err:", err);
     } finally {
       if (!silent) setLoading(false);
     }
   };
 
+  const persistState = async (next: SystemState) => {
+    if (!user) return;
+    // Exclude products from JSON storage - they live in the products table now
+    const stateToSave = { ...next, products: [] };
+    await saveShopState(user.id, stateToSave);
+    setStoreState(next);
+  };
+
   const fetchMessengerStatus = async () => {
     setLoadingMessengerStatus(true);
     try {
-      const res = await fetch("/api/messenger/status");
-      if (res.ok) {
-        const data = await res.json();
-        setMessengerStatus(data);
-      } else {
-        setMessengerStatus(null);
+      const data = await invokeApi<{
+        connected: boolean;
+        oauth_completed?: boolean;
+        pending_page_selection?: boolean;
+        pages: { id: string; name: string }[];
+        active_page_id?: string | null;
+        error?: string;
+      }>("messenger/status");
+      const pages = Array.isArray(data.pages) ? data.pages : [];
+      setMessengerStatus({
+        connected: Boolean(data.connected),
+        oauth_completed: Boolean(data.oauth_completed),
+        pending_page_selection: Boolean(data.pending_page_selection),
+        pages,
+        active_page_id: data.active_page_id,
+        error: data.error,
+      });
+      if (data.active_page_id) {
+        setPendingPageId(String(data.active_page_id));
+      } else if (pages.length === 1) {
+        setPendingPageId(pages[0].id);
       }
     } catch {
-      setMessengerStatus(null);
+      setMessengerStatus({
+        connected: false,
+        pages: [],
+        error: "Could not reach API. Check Omnichannel backend on port 8000.",
+      });
     } finally {
       setLoadingMessengerStatus(false);
     }
   };
 
+  const startFacebookConnect = async () => {
+    try {
+      const redirectUri =
+        (import.meta.env.VITE_FB_REDIRECT_URI as string | undefined)?.replace(/\/$/, "") ||
+        `${window.location.origin}/facebook/callback`;
+
+      const data = await invokeApi<{ url?: string; state?: string; error?: string }>(
+        "messenger/auth-url",
+        { redirect_uri: redirectUri }
+      );
+      if (data.error || !data.url) {
+        showToast(
+          data.error ||
+            (lang === "my"
+              ? "Facebook ချိတ်ဆက်မှု မစတင်နိုင်ပါ။"
+              : "Unable to start Facebook login."),
+          "info"
+        );
+        return;
+      }
+
+      if (data.state) {
+        sessionStorage.setItem("fb_oauth_state", data.state);
+      }
+
+      const popup = window.open(data.url, "fb_oauth", "width=620,height=720");
+      if (!popup) {
+        showToast(
+          lang === "my" ? "Popup ကို ခွင့်ပြုပေးပါ။" : "Please allow popups for this site.",
+          "info"
+        );
+        return;
+      }
+
+      const onMessage = (ev: MessageEvent) => {
+        if (ev.data?.type === "messenger_oauth_done") {
+          window.removeEventListener("message", onMessage);
+          fetchMessengerStatus();
+          fetchState(true);
+        }
+      };
+      window.addEventListener("message", onMessage);
+
+      const poll = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(poll);
+          window.removeEventListener("message", onMessage);
+          fetchMessengerStatus();
+          fetchState(true);
+        }
+      }, 2000);
+      setTimeout(() => {
+        clearInterval(poll);
+        window.removeEventListener("message", onMessage);
+      }, 180000);
+    } catch {
+      showToast(
+        lang === "my"
+          ? "Omnichannel backend (port 8000) ကို ဖွင့်ထားပါ။"
+          : "Start Omnichannel backend: uvicorn app.main:app --reload --port 8000",
+        "info"
+      );
+    }
+  };
+
+  const fetchDeliveryZonesFromApi = async () => {
+    setDeliveryZonesLoading(true);
+    const shopAddress =
+      shopRecord?.address?.trim() ||
+      shopRecord?.onboarding_profile?.business_address?.trim() ||
+      "";
+    try {
+      const result = await fetchDeliveryMatrix(
+        deliveryZonesPage,
+        10,
+        deliveryZonesSearch,
+        shopAddress
+      );
+      setDeliveryZones(result.data);
+      setDeliveryZonesPagination(result.pagination);
+    } catch (err) {
+      console.error("Failed to fetch delivery zones:", err);
+      showToast(
+        lang === "my" 
+          ? "ပို့ဆောင်ခ အချက်အလက်များ ရယူ၍မရပါ" 
+          : "Failed to load delivery zones", 
+        "error"
+      );
+    } finally {
+      setDeliveryZonesLoading(false);
+    }
+  };
+
   // Run initial state loading and setup periodic fast poll to grab customer simulator inputs immediately!
   useEffect(() => {
+    if (user && !authLoading) {
+      localStorage.setItem('sales_brain_visited', 'true');
+    }
+    if (!user) return;
     fetchState();
-
-    // High frequency interval to handle real-time simulation updates
     const interval = setInterval(() => {
       fetchState(true);
     }, 4500);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [user?.id, authLoading]);
 
-  // Ensure the bot-config form keeps a stable draft while typing
+  // Load Messenger status when opening the Messenger tab (not on every state poll)
   useEffect(() => {
-    if (!storeState) return;
-    if (activeTab === "bot_config") {
+    if (activeTab !== "bot_config" || botConnectionTab !== "messenger") return;
+    if (storeState) {
       setConfigDraft((prev) => prev ?? storeState.config);
       if (botConnectionTab === "messenger") {
         fetchMessengerStatus();
@@ -409,13 +655,26 @@ export default function App() {
     }
   }, [activeTab, storeState, botConnectionTab]);
 
+  // Fetch delivery zones when tab, page, search, or shop address changes
+  useEffect(() => {
+    if (activeTab === "delivery") {
+      fetchDeliveryZonesFromApi();
+    }
+  }, [
+    activeTab,
+    deliveryZonesPage,
+    deliveryZonesSearch,
+    shopRecord?.address,
+    shopRecord?.onboarding_profile?.business_address,
+  ]);
+
   // Fetch AI strategy when the selected language changes
   useEffect(() => {
     fetchAiStrategy();
   }, [lang]);
 
   // Display toast alerts
-  const showToast = (text: string, type: "success" | "info" = "success") => {
+  const showToast = (text: string, type: "success" | "info" | "error" = "success") => {
     setShowNotification({ text, type });
     setTimeout(() => {
       setShowNotification(null);
@@ -423,22 +682,13 @@ export default function App() {
   };
 
   // Retrieve AI Strategizer
-  const fetchAiStrategy = async (force: boolean = false) => {
+  const fetchAiStrategy = async (_force: boolean = false) => {
     setLoadingAi(true);
     try {
-      const url = force 
-        ? `/api/ai/strategy?force=true&lang=${lang}` 
-        : `/api/ai/strategy?lang=${lang}`;
-      const res = await fetch(url, { method: "POST" });
-      if (res.ok) {
-        const contentType = res.headers.get("Content-Type") || "";
-        if (contentType.includes("application/json")) {
-          const data = await res.json();
-          setAiAnalysisText(data.strategy);
-        }
-      }
+      const data = store.getAiStrategy(lang);
+      setAiAnalysisText(data.strategy);
     } catch (err) {
-      console.warn("Failed quietly to fetch AI strategy briefing:", err);
+      console.warn("Failed to load AI strategy briefing:", err);
     } finally {
       setLoadingAi(false);
     }
@@ -450,21 +700,14 @@ export default function App() {
     if (!storeState) return;
     setSavingAction(true);
     try {
-      const response = await fetch("/api/onboarding", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(configDraft || storeState.config)
+      const data = await invokeApi<{ config?: ShopConfig }>("onboarding", {
+        ...(configDraft || storeState.config),
       });
-      if (response.ok) {
-        try {
-          const data = await response.json();
-          if (data?.config) {
-            setStoreState((prev) => prev ? ({ ...prev, config: data.config }) : prev);
-            setConfigDraft(data.config);
-          }
-        } catch {
-          // ignore JSON parse issues
-        }
+      if (data?.config) {
+        setStoreState((prev) => (prev ? { ...prev, config: data.config! } : prev));
+        setConfigDraft(data.config);
+      }
+      {
         showToast(
           lang === "my" 
             ? "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီး တယ်လီဂရမ်နှင့် ချိတ်ဆက်ပြီးပါပြီ။ 🟢" 
@@ -488,8 +731,8 @@ export default function App() {
     
     if (window.confirm(confirmationMsg)) {
       try {
-        const res = await fetch("/api/reset", { method: "POST" });
-        if (res.ok) {
+        await invokeApi("reset");
+        {
           showToast(
             lang === "my"
               ? "စမ်းသပ်မှုစနစ်အား မူလပထမ ပုသိမ်ဟလာဝါအရောင်းဆိုင်ပုံစံ ပြန်လည်သတ်မှတ်ပြီးပါပြီ။"
@@ -511,19 +754,23 @@ export default function App() {
     setSavingAction(true);
     try {
       const isEdit = !!editingProduct;
-      const url = "/api/products";
-      const payload = {
-        action: isEdit ? "edit" : "add",
-        product: isEdit ? { ...editingProduct, ...prodForm } : prodForm
-      };
-      
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
+      if (!user) return;
 
-      if (res.ok) {
+      const productData = {
+        id: editingProduct?.id,
+        name: prodForm.name,
+        price: Number(prodForm.price) || 0,
+        description: prodForm.description,
+        stock: Number(prodForm.stock) || 0,
+        image: prodForm.image || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?auto=format&fit=crop&q=80&w=400",
+        varies: prodForm.varies,
+        is_on_demand: prodForm.is_on_demand,
+        waiting_time: prodForm.waiting_time,
+      };
+
+      const result = await upsertProduct(user.id, productData);
+      
+      if (result.success) {
         showToast(
           isEdit 
             ? (lang === "my" ? "ကုန်ပစ္စည်းအချက်အလက် ပြင်ဆင်မှု ပြီးမြောက်ပါပြီ။" : "Product information updated successfully!")
@@ -532,8 +779,7 @@ export default function App() {
         );
         setShowProductModal(false);
         setEditingProduct(null);
-        // Clear form
-        setProdForm({ name: "", category: "Desserts", price: 4500, description: "", stock: 25, image: "" });
+        setProdForm({ name: "", price: 4500, description: "", stock: 25, image: "", varies: [], is_on_demand: false, waiting_time: "" });
         fetchState();
       }
     } catch (err) {
@@ -550,13 +796,13 @@ export default function App() {
 
     if (confirm(confirmMsg)) {
       try {
-        const res = await fetch("/api/products", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: "delete", product: prod })
-        });
-        if (res.ok) {
-          showToast(lang === "my" ? "ကုန်ပစ္စည်း ဖျက်ပြီးပါပြီ။" : "Product deleted successfully.", "success");
+        if (!user) return;
+        const result = await deleteProduct(prod.id, user.id);
+        if (result.success) {
+          showToast(
+            lang === "my" ? "ကုန်ပစ္စည်းကို ဖျက်ပြီးပါပြီ။" : "Product removed from catalog.",
+            "info"
+          );
           fetchState();
         }
       } catch (err) {
@@ -567,58 +813,60 @@ export default function App() {
 
   // Delivery zone Matrix adjustments
   const handleAddZone = async () => {
-    if (!newZone.township.trim()) return;
+    if (!newZone.township_name.trim()) return;
     try {
-      const res = await fetch("/api/delivery-zones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "add", zone: newZone })
+      await addDeliveryZone({
+        township_name: newZone.township_name,
+        region: newZone.region,
+        division: newZone.division,
+        rate: Number(newZone.rate) || 0,
+        estimated_transit_timeline: newZone.estimated_transit_timeline || "1-2 Days",
       });
-      if (res.ok) {
-        showToast(
-          lang === "my" 
-            ? `${newZone.township} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။` 
-            : `Added township rate mapping for: ${newZone.township}`, 
-          "success"
-        );
-        setNewZone({ township: "", rate: 2000, deliveryTime: "1-2 Days" });
-        fetchState();
-      }
+      showToast(
+        lang === "my" 
+          ? `${newZone.township_name} အတွက် ပို့ဆောင်ခ သတ်မှတ်ပြီးပါပြီ။` 
+          : `Added township rate mapping for: ${newZone.township_name}`, 
+        "success"
+      );
+      setNewZone({ township_name: "", region: "", division: "", rate: 2000, estimated_transit_timeline: "1-2 Days" });
+      fetchDeliveryZonesFromApi();
     } catch (err) {
       console.error(err);
+      showToast(
+        lang === "my" 
+          ? "ပို့ဆောင်ခ သတ်မှတ်၍မရပါ" 
+          : "Failed to add delivery zone", 
+        "error"
+      );
     }
   };
 
-  const handleDeleteZone = async (idx: number, name: string) => {
+  const handleDeleteZone = async (id: string, name: string) => {
     try {
-      const res = await fetch("/api/delivery-zones", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "delete", index: idx })
-      });
-      if (res.ok) {
-        showToast(
-          lang === "my"
-            ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
-            : `Removed township shipping rule: ${name}`,
-          "info"
-        );
-        fetchState();
-      }
+      await deleteDeliveryZone(id);
+      showToast(
+        lang === "my"
+          ? `${name} ပို့ဆောင်ခ သတ်မှတ်ချက်ကို ဖျက်ထုတ်ပြီးပါပြီ။`
+          : `Removed township shipping rule: ${name}`,
+        "info"
+      );
+      fetchDeliveryZonesFromApi();
     } catch (err) {
       console.error(err);
+      showToast(
+        lang === "my"
+          ? "ပို့ဆောင်ခ ဖျက်၍မရပါ"
+          : "Failed to delete delivery zone",
+        "error"
+      );
     }
   };
 
   // Order payment screenshot evaluation trigger (Accept / Cancel)
   const handleUpdateOrderStatus = async (orderId: string, status: 'confirmed' | 'cancelled' | 'completed') => {
     try {
-      const res = await fetch("/api/orders/update", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId, status })
-      });
-      if (res.ok) {
+      await invokeApi("orders/update", { orderId, status });
+      {
         showToast(
           lang === "my"
             ? `အော်ဒါ အခြေအနေကို [${status.toUpperCase()}] သို့ ပြောင်းလဲလိုက်ပါပြီ။ ဘောက်ချာပေးပို့လိုက်ပါသည်။`
@@ -633,15 +881,10 @@ export default function App() {
     }
   };
 
-  // Live Manual Takeover over specified Customer session
   const handleTakeover = async (sessId: string) => {
     try {
-      const res = await fetch("/api/bot/takeover", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sessId })
-      });
-      if (res.ok) {
+      await invokeApi("bot/takeover", { sessionId: sessId });
+      {
         showToast(
           lang === "my"
             ? "🔴 AI ဘော့တ်ကို ပိတ်လိုက်ပါပြီ။ ဆိုင်ရှင်တိုက်ရိုက်ဖြေကြားနေပါသည်။"
@@ -657,12 +900,8 @@ export default function App() {
 
   const handleReleaseToAi = async (sessId: string) => {
     try {
-      const res = await fetch("/api/bot/release", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: sessId })
-      });
-      if (res.ok) {
+      await invokeApi("bot/release", { sessionId: sessId });
+      {
         showToast(
           lang === "my"
             ? "🟢 AI ဘော့တ်ကို ပြန်လည်ဖွင့်လိုက်ပါပြီ။ ဘော့တ်မှ ဆက်လက်ဖြေကြားပါမည်။"
@@ -680,15 +919,9 @@ export default function App() {
     e.preventDefault();
     if (!ownerReplyText.trim()) return;
     try {
-      const res = await fetch("/api/bot/owner-reply", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: activeSessionId, content: ownerReplyText })
-      });
-      if (res.ok) {
-        setOwnerReplyText("");
-        fetchState();
-      }
+      await invokeApi("bot/owner-reply", { sessionId: activeSessionId, content: ownerReplyText });
+      setOwnerReplyText("");
+      fetchState();
     } catch (err) {
       console.error(err);
     }
@@ -723,6 +956,25 @@ export default function App() {
     );
   };
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#070f21] text-slate-100 flex flex-col justify-center items-center font-sans">
+        <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (showLandingPage && !user) {
+    return <LandingPage onEnter={() => {
+      localStorage.setItem('sales_brain_visited', 'true');
+      setShowLandingPage(false);
+    }} />;
+  }
+
+  if (!user) {
+    return <AuthPage />;
+  }
+
   if (loading || !storeState) {
     return (
       <div className="min-h-screen bg-[#070f21] text-slate-100 flex flex-col justify-center items-center font-sans space-y-4">
@@ -738,58 +990,76 @@ export default function App() {
     );
   }
 
-  // Intercept workflow with Onboarding Screen
-  if (!storeState.config.onboardingCompleted) {
+  const onboardingInitialForm: OnboardingFormState = shopRecord
+    ? shopRecordToFormData(shopRecord)
+    : emptyOnboardingForm(storeState.config.shopName, storeState.config.ownerName);
+
+  const handleWizardComplete = async (
+    profile: { shopName: string; ownerName: string; phone: string; businessAddress: string },
+    aiSummary: string,
+    wasEdit: boolean
+  ) => {
+    const updatedState = {
+      ...storeState,
+      config: {
+        ...storeState.config,
+        shopName: profile.shopName,
+        ownerName: profile.ownerName,
+        phone: profile.phone || storeState.config.phone,
+        onboardingCompleted: true,
+      },
+    };
+    setStoreState(updatedState);
+    setAiAnalysisText(aiSummary);
+    setEditingOnboarding(false);
+
+    try {
+      await invokeApi("onboarding", {
+        ...storeState.config,
+        shopName: profile.shopName,
+        ownerName: profile.ownerName,
+        phone: profile.phone || storeState.config.phone,
+        onboardingCompleted: true,
+      });
+      await saveShopState(user.id, updatedState);
+      showToast(
+        wasEdit
+          ? lang === "my"
+            ? "လုပ်ငန်းအချက်အလက် ပြင်ဆင်ပြီးပါပြီ။ 🟢"
+            : "Business profile updated successfully. 🟢"
+          : lang === "my"
+            ? "အချက်အလက် စနစ်သိမ်းဆည်းအောင်မြင်ပြီး လုပ်ငန်းဒိုင်ယာလော့ခ် ဖွင့်လှစ်ပါပြီ။ 🟢"
+            : "Setup completed! Welcome to your SME dashboard. 🟢",
+        "success"
+      );
+      await fetchState(true);
+    } catch (err) {
+      console.error("[App] Saving onboarding stats failed", err);
+      setStoreState(updatedState);
+    }
+  };
+
+  // First-time setup or edit profile from dashboard
+  if (!storeState.config.onboardingCompleted || editingOnboarding) {
     return (
       <Onboarding
+        key={editingOnboarding ? `edit-${shopRecord?.id ?? "shop"}` : "setup"}
         lang={lang}
-        initialShopName={storeState.config.shopName}
-        initialOwnerName={storeState.config.ownerName}
+        isEditMode={editingOnboarding}
+        initialFormData={onboardingInitialForm}
         onLangChange={setLang}
-        onComplete={async (profile, aiSummary) => {
-          // Instantly patch the frontend memory block for zero-delay entry feel
-          const updatedState = {
-            ...storeState,
-            config: {
-              ...storeState.config,
-              shopName: profile.shopName,
-              ownerName: profile.ownerName,
-              onboardingCompleted: true
-            }
-          };
-          setStoreState(updatedState);
-          setAiAnalysisText(aiSummary);
-
-          // Persist settings to backing JSON state
-          try {
-            await fetch("/api/onboarding", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                ...storeState.config,
-                shopName: profile.shopName,
-                ownerName: profile.ownerName,
-                onboardingCompleted: true
-              })
-            });
-            showToast(
-              lang === "my"
-                ? "အချက်အလက် စနစ်သိမ်းဆည်းအောင်မြင်ပြီး လုပ်ငန်းဒိုင်ယာလော့ခ် ဖွင့်လှစ်ပါပြီ။ 🟢"
-                : "Setup Completed! Welcome to your SME dashboard dashboard. 🟢",
-              "success"
-            );
-            fetchState();
-          } catch (err) {
-            console.error("[App] Saving onboarding stats failed", err);
-          }
-        }}
+        onCancelEdit={() => setEditingOnboarding(false)}
+        onComplete={(profile, aiSummary) =>
+          handleWizardComplete(profile, aiSummary, editingOnboarding)
+        }
       />
     );
   }
+ 
 
   // Derived dashboard analytics values
   const productsCount = storeState.products.length;
-  const deliveryZonesCount = storeState.deliveryZones.length;
+  const deliveryZonesCount = deliveryZones.length;
   const verifiedOrders = storeState.orders.filter(o => o.status === "confirmed" || o.status === "completed");
   const unverifiedPrepaysCount = storeState.orders.filter(o => o.status === "verifying" && o.paymentMethod === "prepay").length;
   const alertLowStock = storeState.products.filter(p => p.stock <= 5);
@@ -811,7 +1081,7 @@ export default function App() {
     { label: "Sun", value: totalSalesRevenue || 120000 }
   ];
 
-  const activeSession: TelegramSession = storeState.sessions[activeSessionId] || Object.values(storeState.sessions)[0];
+  const activeSession: TelegramSession | undefined = storeState.sessions[activeSessionId] || Object.values(storeState.sessions)[0];
 
   return (
     <div className="min-h-screen bg-[#f0f9ff] text-slate-900 font-sans flex flex-col selection:bg-sky-500 selection:text-white pb-12 relative overflow-hidden">
@@ -854,32 +1124,40 @@ export default function App() {
           {/* Edit Business Profile / Onboarding Configuration Desk */}
           <button
             onClick={async () => {
-              // Update local state is instantaneous
-              setStoreState((prev) => ({
-                ...prev,
-                config: {
-                  ...prev.config,
-                  onboardingCompleted: false
-                }
-              }));
-              // Synchronously tell backend to set onboardingCompleted to false so poller doesn't override
+              const confirmMsg = lang === "my"
+                ? "လုပ်ငန်းအချက်အလက်များကို ပြန်လည်ပြင်ဆင်လိုပါသလား?"
+                : "Would you like to edit your business profile details?";
+
+              if (!window.confirm(confirmMsg)) return;
+
               try {
-                await fetch("/api/onboarding", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    ...storeState.config,
-                    onboardingCompleted: false
-                  })
-                });
+                const freshShop = await getShopForOwner(user.id);
+                if (freshShop) {
+                  setShopRecord(freshShop);
+                }
+                setEditingOnboarding(true);
               } catch (e) {
-                console.warn("Could not save onboarding state back to Server:", e);
+                console.warn("Could not load profile for edit:", e);
+                showToast(
+                  lang === "my"
+                    ? "အချက်အလက် ဖွင့်မရပါ။ ထပ်စမ်းကြည့်ပါ။"
+                    : "Could not load profile. Please try again.",
+                  "info"
+                );
               }
             }}
             className="flex items-center gap-1.5 text-[9px] font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-1.5 px-3 rounded-lg border border-indigo-200 transition-colors cursor-pointer"
           >
             <Edit2 size={11} className="text-indigo-600 animate-pulse" />
             <span>{t("editBusinessProfile")}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => signOut()}
+            className="text-[9px] font-bold text-slate-500 hover:text-rose-600 px-2 py-1 rounded-lg border border-slate-200"
+          >
+            Sign out
           </button>
 
           {/* Fully custom Burmese - English switch button */}
@@ -1157,7 +1435,7 @@ export default function App() {
                               </td>
                               <td className="p-3 font-sans text-[10px] text-slate-500 leading-tight">
                                 <span className="font-medium text-slate-700 block">{o.township}</span>
-                                <span className="text-[9px] text-slate-400 line-clamp-1">{o.shippingAddress}</span>
+                                <span className="text-[9px] text-slate-400 line-clamp-1">{o.addressDetails || o.township}</span>
                               </td>
                               <td className="p-3">
                                 <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
@@ -1293,7 +1571,7 @@ export default function App() {
                 <button
                   onClick={() => {
                     setEditingProduct(null);
-                    setProdForm({ name: "", category: "Desserts", price: 4500, description: "", stock: 25, image: "" });
+                    setProdForm({ name: "", price: 4500, description: "", stock: 25, image: "", varies: [], is_on_demand: false, waiting_time: "" });
                     setShowProductModal(true);
                   }}
                   className="bg-black hover:bg-slate-800 text-white text-xs font-bold px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
@@ -1319,10 +1597,23 @@ export default function App() {
 
                     <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
                       <div>
-                        <div className="text-[8px] font-bold tracking-wider font-mono text-indigo-600 uppercase">
-                          {t("categories")[p.category as "Desserts" | "Beverages" | "Lifestyle" | "Snacks"] || p.category}
-                        </div>
-                        <h4 className="text-xs font-semibold text-slate-800 mt-1 line-clamp-1">{p.name}</h4>
+                        <h4 className="text-xs font-semibold text-slate-800 line-clamp-1">{p.name}</h4>
+{p.varies && p.varies.length > 0 && (
+                           <div className="flex flex-wrap gap-1.5 mt-2">
+                             {p.varies.slice(0, 3).map((vary, idx) => (
+                               <div key={idx} className="inline-flex items-center gap-1 text-[9px] font-medium bg-gradient-to-br from-indigo-50 to-indigo-100 border border-indigo-200/60 px-2 py-1 rounded-lg">
+                                 <span className="text-indigo-500 font-semibold">{vary.key}</span>
+                                 <span className="text-slate-300">•</span>
+                                 <span className="text-indigo-700 font-semibold">{vary.value}</span>
+                               </div>
+                             ))}
+                             {p.varies.length > 3 && (
+                               <span className="text-[9px] font-medium text-slate-500 bg-slate-100/80 border border-slate-200/60 px-2 py-1 rounded-lg">
+                                 +{p.varies.length - 3}
+                               </span>
+                             )}
+                           </div>
+                         )}
                       </div>
 
                       <div className="pt-2 border-t border-slate-100/80 flex items-center justify-between text-[11px]">
@@ -1342,11 +1633,13 @@ export default function App() {
                             setEditingProduct(p);
                             setProdForm({
                               name: p.name,
-                              category: p.category,
                               price: p.price,
                               description: p.description,
                               stock: p.stock,
-                              image: p.image
+                              image: p.image,
+                              varies: p.varies || [],
+                              is_on_demand: p.is_on_demand || false,
+                              waiting_time: p.waiting_time || ""
                             });
                             setShowProductModal(true);
                           }}
@@ -1395,32 +1688,16 @@ export default function App() {
                         />
                       </div>
 
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-semibold text-slate-400 block uppercase">{t("categoryLabel")}</label>
-                          <select
-                            value={prodForm.category}
-                            onChange={(e) => setProdForm({ ...prodForm, category: e.target.value })}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                          >
-                            <option value="Desserts">Sweet Desserts & Cakes</option>
-                            <option value="Beverages">Artisanal Drinks & Mixes</option>
-                            <option value="Lifestyle">Traditional Arts & Crafts</option>
-                            <option value="Snacks">Cracker Snacks</option>
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-semibold text-slate-400 block uppercase">{t("unitPriceLabel")}</label>
-                          <input
-                            type="number"
-                            required
-                            value={prodForm.price}
-                            onChange={(e) => setProdForm({ ...prodForm, price: Number(e.target.value) })}
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-800 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            placeholder="e.g., 4500"
-                          />
-                        </div>
+                      <div className="space-y-1">
+                        <label className="text-[9px] font-semibold text-slate-400 block uppercase">{t("unitPriceLabel")}</label>
+                        <input
+                          type="number"
+                          required
+                          value={prodForm.price}
+                          onChange={(e) => setProdForm({ ...prodForm, price: Number(e.target.value) })}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-800 font-mono focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          placeholder="e.g., 4500"
+                        />
                       </div>
 
                       <div className="grid grid-cols-2 gap-3">
@@ -1494,6 +1771,91 @@ export default function App() {
                         />
                       </div>
 
+                      {/* Varies Section */}
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-semibold text-slate-400 block uppercase">
+                          {lang === "my" ? "အမျိုးအစားများ" : "VARIES"}
+                        </label>
+                        <div className="space-y-2">
+                          {prodForm.varies.map((vary, idx) => (
+                            <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+                              <input
+                                type="text"
+                                value={vary.key}
+                                onChange={(e) => {
+                                  const updated = [...prodForm.varies];
+                                  updated[idx].key = e.target.value;
+                                  setProdForm({ ...prodForm, varies: updated });
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-800 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                placeholder={lang === "my" ? "အမည်" : "Key (e.g., Size)"}
+                              />
+                              <input
+                                type="text"
+                                value={vary.value}
+                                onChange={(e) => {
+                                  const updated = [...prodForm.varies];
+                                  updated[idx].value = e.target.value;
+                                  setProdForm({ ...prodForm, varies: updated });
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-800 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                placeholder={lang === "my" ? "တန်ဖိုး" : "Value (e.g., 500g)"}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = prodForm.varies.filter((_, i) => i !== idx);
+                                  setProdForm({ ...prodForm, varies: updated });
+                                }}
+                                className="text-rose-600 hover:text-rose-700 p-2 rounded-lg hover:bg-rose-50 transition-colors"
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setProdForm({ ...prodForm, varies: [...prodForm.varies, { key: "", value: "" }] });
+                            }}
+                            className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-600 py-2 rounded-lg text-[10px] font-bold tracking-wide transition-all cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            <Plus size={12} /> {lang === "my" ? "အမျိုးအစား ထည့်ရန်" : "Add Varies"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* On Demand Toggle */}
+                      <div className="space-y-2">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={prodForm.is_on_demand}
+                            onChange={(e) => setProdForm({ ...prodForm, is_on_demand: e.target.checked, waiting_time: e.target.checked ? prodForm.waiting_time : "" })}
+                            className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
+                          />
+                          <span className="text-[11px] font-semibold text-slate-700">
+                            {lang === "my" ? "အော်ဒါအလိုက် ပြုလုပ်ရန်" : "On Demand"}
+                          </span>
+                        </label>
+                      </div>
+
+                      {/* Conditional Waiting Time Input */}
+                      {prodForm.is_on_demand && (
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-semibold text-slate-400 block uppercase">
+                            {lang === "my" ? "စောင့်ဆိုင်းရမည့်အချိန်" : "WAITING TIME"}
+                          </label>
+                          <input
+                            type="text"
+                            value={prodForm.waiting_time}
+                            onChange={(e) => setProdForm({ ...prodForm, waiting_time: e.target.value })}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-800 text-[11px] focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            placeholder={lang === "my" ? "ဥပမာ - ၂ ရက်" : "e.g., 2 days"}
+                          />
+                        </div>
+                      )}
+
                       <button
                         type="submit"
                         disabled={savingAction}
@@ -1522,8 +1884,8 @@ export default function App() {
                     <label className="text-[9px] text-[#475569] block font-mono font-bold uppercase">{t("townshipNameLabel")}</label>
                     <input
                       type="text"
-                      value={newZone.township}
-                      onChange={(e) => setNewZone({ ...newZone, township: e.target.value })}
+                      value={newZone.township_name}
+                      onChange={(e) => setNewZone({ ...newZone, township_name: e.target.value })}
                       placeholder="e.g., Yankin, Tamwe, North Dagon"
                       className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-slate-800"
                     />
@@ -1548,36 +1910,82 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Search Input */}
+              <div className="bg-white border border-slate-200/60 p-4 rounded-2xl shadow-sm">
+                <input
+                  type="text"
+                  value={deliveryZonesSearch}
+                  onChange={(e) => {
+                    setDeliveryZonesSearch(e.target.value);
+                    setDeliveryZonesPage(1);
+                  }}
+                  placeholder={lang === "my" ? "မြို့နယ်အမည်ရှာရန်..." : "Search township name..."}
+                  className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-slate-800 text-xs"
+                />
+              </div>
+
               {/* Township list grid */}
               <div className="bg-white border border-slate-200/60 rounded-2xl overflow-hidden text-xs shadow-sm">
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50/50 text-[10px] uppercase font-mono tracking-wider font-semibold text-slate-500">
-                      <th className="p-3">{t("matchedTownship")}</th>
-                      <th className="p-3">{t("rateLabel")}</th>
-                      <th className="p-3">{t("estimatedTransit")}</th>
-                      <th className="p-3 text-center">{t("settingsActions")}</th>
+                      <th className="p-3 w-1/3">{t("matchedTownship")}</th>
+                      <th className="p-3 w-1/3">{t("rateLabel")}</th>
+                      <th className="p-3 w-1/3">{t("estimatedTransit")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white text-slate-600 font-mono">
-                    {storeState.deliveryZones.map((zone, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50/50 transition-all">
-                        <td className="p-3 font-bold text-slate-800">{zone.township}</td>
-                        <td className="p-3 text-emerald-600 font-bold">{zone.rate.toLocaleString()} MMK</td>
-                        <td className="p-3 text-slate-500">{zone.deliveryTime}</td>
-                        <td className="p-3 text-center">
-                          <button
-                            onClick={() => handleDeleteZone(idx, zone.township)}
-                            className="bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-[9px] px-2.5 py-1 rounded-md border border-rose-150 cursor-pointer"
-                          >
-                            {t("removeRule")}
-                          </button>
+                    {deliveryZonesLoading ? (
+                      <tr>
+                        <td colSpan={3} className="p-8 text-center text-slate-400">
+                          <RefreshCw size={16} className="animate-spin inline-block mr-2" />
+                          Loading...
                         </td>
                       </tr>
-                    ))}
+                    ) : deliveryZones.length === 0 ? (
+                      <tr>
+                        <td colSpan={3} className="p-8 text-center text-slate-400">
+                          No delivery zones found
+                        </td>
+                      </tr>
+                    ) : (
+                      deliveryZones.map((zone) => (
+<tr key={zone.id} className="hover:bg-slate-50/50 transition-all">
+                          <td className="p-3 font-bold text-slate-800 w-1/3">{zone.township_name}</td>
+                          <td className="p-3 text-emerald-600 font-bold w-1/3">{zone.rate.toLocaleString()} MMK</td>
+                          <td className="p-3 text-slate-500 w-1/3">{zone.estimated_transit_timeline}</td>
+                        </tr>
+                      ))
+                    )}
                   </tbody>
                 </table>
               </div>
+
+              {/* Pagination Controls */}
+              {deliveryZonesPagination.total_pages > 1 && (
+                <div className="flex items-center justify-between bg-white border border-slate-200/60 rounded-2xl p-4 text-xs">
+                  <div className="text-slate-500 font-mono">
+                    Page {deliveryZonesPagination.current_page} of {deliveryZonesPagination.total_pages} 
+                    ({deliveryZonesPagination.total_records} total)
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setDeliveryZonesPage(p => p - 1)}
+                      disabled={!deliveryZonesPagination.has_prev}
+                      className="px-3 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-bold"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setDeliveryZonesPage(p => p + 1)}
+                      disabled={!deliveryZonesPagination.has_next}
+                      className="px-3 py-1 bg-slate-100 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg font-bold"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -1664,218 +2072,325 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 5: TELEGRAM BOT ACTIVATION SETUP */}
+          {/* TAB 5: BOT ACTIVATION SETUP */}
           {activeTab === "bot_config" && (
             <div className="space-y-4">
-              <div className="bg-white border border-slate-200/60 rounded-2xl p-5 shadow-sm text-slate-700">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <h3 className="text-xs font-extrabold font-mono text-slate-900 flex items-center gap-2 mb-1 uppercase">
-                      {t("tabConfig")}
-                    </h3>
-                    <p className="text-[10px] text-slate-400">
-                      {lang === "my"
-                        ? "ချန်နယ် (Telegram / Messenger) မျိုးစုံနဲ့ ဘော့တ်ချိတ်ဆက်မှုများကို ဒီနေရာမှာ စီစဉ်နိုင်ပါသည်။"
-                        : "Manage Telegram + Facebook Messenger bot connections from this workspace."}
-                    </p>
-                  </div>
+              {/* Bot Type Sub-tabs */}
+              <div className="flex bg-white/50 p-1 rounded-xl border border-sky-100 w-fit">
+                <button
+                  onClick={() => setBotConnectionTab("messenger")}
+                  className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    botConnectionTab === "messenger"
+                      ? "bg-black text-white shadow-sm"
+                      : "text-slate-500 hover:text-black"
+                  }`}
+                >
+                  Messenger
+                </button>
+                <button
+                  onClick={() => setBotConnectionTab("telegram")}
+                  className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    botConnectionTab === "telegram"
+                      ? "bg-black text-white shadow-sm"
+                      : "text-slate-500 hover:text-black"
+                  }`}
+                >
+                  Telegram
+                </button>
+              </div>
 
-                  {/* Channel switcher */}
-                  <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-xl p-1 w-fit">
-                    <button
-                      type="button"
-                      onClick={() => setBotConnectionTab("telegram")}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
-                        botConnectionTab === "telegram"
-                          ? "bg-[#229ED9] text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-800"
-                      }`}
-                    >
-                      Telegram
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBotConnectionTab("messenger")}
-                      className={`px-3 py-1.5 rounded-lg text-[10px] font-bold cursor-pointer transition-all ${
-                        botConnectionTab === "messenger"
-                          ? "bg-[#0A7CFF] text-white shadow-sm"
-                          : "text-slate-600 hover:text-slate-800"
-                      }`}
-                    >
-                      Messenger
-                    </button>
-                  </div>
-                </div>
+              {botConnectionTab === "telegram" ? (
+                <div className="bg-white border border-slate-200/60 rounded-2xl p-5 shadow-sm text-slate-700 animate-fadeIn">
+                  <h3 className="text-xs font-extrabold font-mono text-slate-900 flex items-center gap-2 mb-1 uppercase">
+                    {t("telegramBotActivationWorkspace")}
+                  </h3>
+                <p className="text-[10px] text-slate-400">{t("oneClickOnboardingDesc")}</p>
 
-                {botConnectionTab === "telegram" && (
-                  <>
-                    <div className="mt-4">
-                      <h4 className="text-[10px] font-extrabold font-mono tracking-wider text-slate-600 uppercase">
-                        {t("telegramBotActivationWorkspace")}
-                      </h4>
-                      <p className="text-[10px] text-slate-400">{t("oneClickOnboardingDesc")}</p>
+                {storeState.config.telegramBotUsername && (
+                  <div className="mt-4 p-3 bg-sky-50 border border-sky-100 rounded-xl flex items-center justify-between gap-3 text-slate-700">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-[#229ED9]/10 text-[#229ED9] flex items-center justify-center font-bold text-sm shrink-0">
+                        Bot
+                      </div>
+                      <div>
+                        <h4 className="text-[11px] font-bold text-slate-900">
+                          {lang === "my" ? "တယ်လီဂရမ် Bot သို့ တိုက်ရိုက်သွားရန်" : "Direct Link to Active Telegram Bot"}
+                        </h4>
+                        <p className="text-[9px] text-slate-400 font-mono">
+                          @{storeState.config.telegramBotUsername.replace("@", "")}
+                        </p>
+                      </div>
                     </div>
-
-                    {storeState.config.telegramBotUsername && (
-                      <div className="mt-4 p-3 bg-sky-50 border border-sky-100 rounded-xl flex items-center justify-between gap-3 text-slate-700">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-lg bg-[#229ED9]/10 text-[#229ED9] flex items-center justify-center font-bold text-sm shrink-0">
-                            Bot
-                          </div>
-                          <div>
-                            <h4 className="text-[11px] font-bold text-slate-900">
-                              {lang === "my" ? "တယ်လီဂရမ် Bot သို့ တိုက်ရိုက်သွားရန်" : "Direct Link to Active Telegram Bot"}
-                            </h4>
-                            <p className="text-[9px] text-slate-400 font-mono">
-                              @{storeState.config.telegramBotUsername.replace("@", "")}
-                            </p>
-                          </div>
-                        </div>
-                        <a
-                          href={`https://t.me/${storeState.config.telegramBotUsername.replace("@", "")}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#229ED9] hover:bg-[#34aadf] text-white flex items-center gap-1 cursor-pointer transition-all shadow-sm shrink-0 flex items-center gap-1"
-                        >
-                          <Send size={11} className="rotate-45" />
-                          <span>{t("liveBot")}</span>
-                          <ExternalLink size={10} />
-                        </a>
-                      </div>
-                    )}
-
-                    <form onSubmit={handleOnboardingSubmit} className="space-y-4 mt-5 text-xs text-slate-600">
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("storeNameLabel")}</label>
-                        <input
-                          type="text"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                          value={configDraft?.shopName || ""}
-                          onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, shopName: e.target.value }) : prev)}
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("smeOwnerNameLabel")}</label>
-                          <input
-                            type="text"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                            value={configDraft?.ownerName || ""}
-                            onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, ownerName: e.target.value }) : prev)}
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("contactPhoneLabel")}</label>
-                          <input
-                            type="text"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                            value={configDraft?.phone || ""}
-                            onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, phone: e.target.value }) : prev)}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <div className="flex justify-between items-center">
-                            <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("customBotTokenLabel")}</label>
-                            <span className="text-[8px] font-mono text-indigo-500 select-none bg-indigo-50 px-1 rounded">{t("setViaBotFather")}</span>
-                          </div>
-                          <input
-                            type="text"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-[9px]"
-                            value={configDraft?.telegramBotToken || ""}
-                            onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, telegramBotToken: e.target.value }) : prev)}
-                          />
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("telegramBotUsernameLabel")}</label>
-                          <input
-                            type="text"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                            value={configDraft?.telegramBotUsername || ""}
-                            onChange={(e) => setConfigDraft((prev) => prev ? ({ ...prev, telegramBotUsername: e.target.value }) : prev)}
-                          />
-                        </div>
-                      </div>
-
-                      <button
-                        type="submit"
-                        disabled={savingAction}
-                        className="w-full bg-[#0f1d3a] hover:bg-indigo-900 text-white font-bold py-3 rounded-xl cursor-pointer uppercase text-xs tracking-wider"
-                      >
-                        {savingAction ? "Re-connecting..." : t("saveStoreSettingsBtn")}
-                      </button>
-                    </form>
-                  </>
+                    <a
+                      href={`https://t.me/${storeState.config.telegramBotUsername.replace("@", "")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-lg text-[10px] font-bold bg-[#229ED9] hover:bg-[#34aadf] text-white flex items-center gap-1 cursor-pointer transition-all shadow-sm shrink-0 flex items-center gap-1"
+                    >
+                      <Send size={11} className="rotate-45" />
+                      <span>{t("liveBot")}</span>
+                      <ExternalLink size={10} />
+                    </a>
+                  </div>
                 )}
 
-                {botConnectionTab === "messenger" && (
-                  <div className="mt-4 space-y-4">
-                    <div className="p-3 rounded-xl border border-blue-100 bg-blue-50/60">
-                      <div className="text-[10px] font-extrabold font-mono tracking-wider text-blue-700 uppercase">
-                        FACEBOOK MESSENGER BOT ACTIVATION WORKSPACE
+                {storeState.config.shopId && (
+                  <div className="mt-4 p-3 bg-indigo-50 border border-indigo-100 rounded-xl space-y-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-600/10 text-indigo-600 flex items-center justify-center font-bold text-sm shrink-0">
+                        <ShoppingBag size={16} />
                       </div>
-                      <div className="text-[10px] text-slate-600 mt-1 leading-relaxed">
-                        {lang === "my"
-                          ? "Messenger ဘော့တ်ကို သင့် Facebook Page နဲ့ ချိတ်ဆက်ရန် “Connect Facebook Page” ကိုနှိပ်ပါ။ Developer အနေဖြင့် token/id ထည့်စရာမလိုပါ။"
-                          : "Click “Connect Facebook Page” to link Messenger. No tokens or IDs required."}
+                      <div>
+                        <h4 className="text-[11px] font-bold text-slate-900">
+                          {lang === "my" ? "သင်၏ အွန်လိုင်းအရောင်းဆိုင် လင့်ခ်" : "Your Public Shop Link"}
+                        </h4>
+                        <p className="text-[9px] text-slate-400 font-mono">
+                          Share this with your customers
+                        </p>
                       </div>
                     </div>
-
-                    <div className="flex flex-col sm:flex-row gap-3">
+                    
+                    <div className="flex gap-2">
+                      <div className="flex-1 bg-white border border-indigo-100 rounded-lg px-3 py-2 text-[10px] font-mono text-slate-600 truncate flex items-center">
+                        {buildShopPublicUrl(storeState.config.shopId)}
+                      </div>
                       <button
-                        type="button"
                         onClick={() => {
-                          window.open("http://localhost:8000/messenger/oauth/start", "_blank", "noopener,noreferrer");
+                          const url = buildShopPublicUrl(storeState.config.shopId!);
+                          navigator.clipboard.writeText(url);
+                          setCopiedConfigLink(true);
+                          setTimeout(() => setCopiedConfigLink(false), 2000);
                         }}
-                        className="flex-1 bg-[#0A7CFF] hover:bg-[#0a72ea] text-white font-bold py-3 rounded-xl cursor-pointer uppercase text-xs tracking-wider"
+                        className={`px-3 py-2 rounded-lg border transition-all flex items-center justify-center gap-1.5 text-[10px] font-bold cursor-pointer shadow-sm ${
+                          copiedConfigLink 
+                            ? "bg-emerald-50 border-emerald-200 text-emerald-600" 
+                            : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                        }`}
                       >
-                        Connect Facebook Page
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={fetchMessengerStatus}
-                        disabled={loadingMessengerStatus}
-                        className="flex-1 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold py-3 rounded-xl cursor-pointer uppercase text-xs tracking-wider"
-                      >
-                        {loadingMessengerStatus ? "Checking..." : "Refresh Status"}
+                        {copiedConfigLink ? <Check size={12} /> : <Copy size={12} />}
+                        <span>{copiedConfigLink ? (lang === "my" ? "ကူးပြီး" : "Copied") : (lang === "my" ? "ကူးမည်" : "Copy")}</span>
                       </button>
                     </div>
+                  </div>
+                )}
 
-                    <div className="p-3 rounded-xl border border-slate-200 bg-white">
-                      <div className="text-[9px] font-extrabold font-mono tracking-wider text-slate-500 uppercase">
-                        Connection status
+                <form onSubmit={handleOnboardingSubmit} className="space-y-4 mt-5 text-xs text-slate-600">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("storeNameLabel")}</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
+                      value={storeState.config.shopName}
+                      onChange={(e) => setStoreState({
+                        ...storeState,
+                        config: { ...storeState.config, shopName: e.target.value }
+                      })}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("smeOwnerNameLabel")}</label>
+                      <input
+                        type="text"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
+                        value={storeState.config.ownerName}
+                        onChange={(e) => setStoreState({
+                          ...storeState,
+                          config: { ...storeState.config, ownerName: e.target.value }
+                        })}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("contactPhoneLabel")}</label>
+                      <input
+                        type="text"
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
+                        value={storeState.config.phone}
+                        onChange={(e) => setStoreState({
+                          ...storeState,
+                          config: { ...storeState.config, phone: e.target.value }
+                        })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("telegramBotUsernameLabel")}</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
+                      value={storeState.config.telegramBotUsername}
+                      onChange={(e) => setStoreState({
+                        ...storeState,
+                        config: { ...storeState.config, telegramBotUsername: e.target.value }
+                      })}
+                    />
+                  </div>
+
+
+                  <button
+                    type="submit"
+                    disabled={savingAction}
+                    className="w-full bg-[#0f1d3a] hover:bg-indigo-900 text-white font-bold py-3 rounded-xl cursor-pointer uppercase text-xs tracking-wider"
+                  >
+                    {savingAction ? "Re-connecting..." : t("saveStoreSettingsBtn")}
+                  </button>
+                </form>
+              </div>
+            ) : (
+              <div className="bg-white border border-slate-200/60 rounded-2xl p-5 shadow-sm text-slate-700 animate-fadeIn">
+                <h3 className="text-xs font-extrabold font-mono text-slate-900 flex items-center gap-2 mb-1 uppercase">
+                  {t("messengerBotActivationWorkspace")}
+                </h3>
+                
+                {loadingMessengerStatus && (
+                  <div className="text-[10px] text-slate-400 font-mono mb-3 flex items-center gap-2">
+                    <div className="w-3 h-3 border-2 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
+                    Checking Messenger connection…
+                  </div>
+                )}
+
+                {messengerStatus?.error && !messengerStatus.connected && (
+                  <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 text-[10px] text-amber-900">
+                    {messengerStatus.error}
+                  </div>
+                )}
+
+                {messengerStatus?.connected ? (
+                  <div className="space-y-4 mt-5">
+                    <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-between gap-3 text-slate-700">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
+                          f
+                        </div>
+                        <div>
+                          <h4 className="text-[11px] font-bold text-slate-900">
+                            Active: {storeState.config.messengerBotName || "Facebook Page"}
+                          </h4>
+                          <p className="text-[9px] text-slate-400 font-mono">
+                            ID: {storeState.config.messengerBotId}
+                          </p>
+                        </div>
                       </div>
-                      {messengerStatus?.connected ? (
-                        <div className="mt-2 text-xs text-slate-700">
-                          <div className="font-bold text-emerald-700">Connected</div>
-                          <div className="text-[10px] text-slate-500 mt-1">
-                            {(messengerStatus.pages || []).length > 0
-                              ? `Pages: ${(messengerStatus.pages || []).map((p: any) => p.page_name || p.page_id).join(", ")}`
-                              : "Page connected, but page details not available."}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="mt-2 text-xs text-slate-600">
-                          <div className="font-bold text-amber-700">Not connected yet</div>
-                          <div className="text-[10px] text-slate-500 mt-1">
-                            {lang === "my"
-                              ? "Connect Facebook Page ကို နှိပ်ပြီး Facebook မှ ခွင့်ပြုချက်ပေးပါ။"
-                              : "Click Connect Facebook Page and finish Facebook authorization."}
-                          </div>
-                        </div>
-                      )}
+                      <span className="text-[9px] font-bold text-indigo-600 bg-white px-2 py-1 rounded-lg border border-indigo-100 shadow-sm uppercase tracking-wider">
+                        Live
+                      </span>
                     </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setSavingAction(true);
+                        try {
+                          await invokeApi("messenger/disconnect");
+                          if (storeState && user) {
+                            await persistState({
+                              ...storeState,
+                              config: {
+                                ...storeState.config,
+                                messengerBotId: "",
+                                messengerBotName: "",
+                              },
+                            });
+                          }
+                          setPendingPageId("");
+                          showToast(
+                            lang === "my" ? "Messenger ဘော့တ် ချိတ်ဆက်မှု ပြတ်တောက်ပါပြီ" : "Messenger bot disconnected",
+                            "info"
+                          );
+                          fetchMessengerStatus();
+                        } finally {
+                          setSavingAction(false);
+                        }
+                      }}
+                      className="w-full px-4 py-2.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 transition-all cursor-pointer"
+                    >
+                      {t("disconnectFacebook")}
+                    </button>
+                  </div>
+                ) : messengerStatus?.pending_page_selection ? (
+                  <div className="space-y-4 mt-5">
+                    <p className="text-[11px] text-slate-600 leading-relaxed bg-slate-50 border border-slate-200 rounded-xl p-3">
+                      {t("oauthCompleteChoosePage")}
+                    </p>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-semibold text-slate-400 uppercase block">
+                        {t("selectPageLabel")}
+                      </label>
+                      <select
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-xs"
+                        value={pendingPageId}
+                        onChange={(e) => setPendingPageId(e.target.value)}
+                      >
+                        <option value="">-- Select Page --</option>
+                        {messengerStatus.pages.map((page) => (
+                          <option key={page.id} value={page.id}>{page.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!pendingPageId || savingAction}
+                      onClick={async () => {
+                        const page = messengerStatus.pages.find((p) => p.id === pendingPageId);
+                        if (!page) return;
+                        setSavingAction(true);
+                        try {
+                          const result = await invokeApi<{
+                            page_id?: string;
+                            page_name?: string;
+                          }>("messenger/connect-page", { pageId: page.id });
+                          if (storeState && user && result.page_id) {
+                            await persistState({
+                              ...storeState,
+                              config: {
+                                ...storeState.config,
+                                messengerBotId: result.page_id,
+                                messengerBotName: result.page_name || page.name,
+                              },
+                            });
+                          }
+                          showToast(
+                            lang === "my"
+                              ? "Messenger ဘော့တ် စတင်အသုံးပြုနိုင်ပါပြီ!"
+                              : "Messenger bot is now active on your Page!",
+                            "success"
+                          );
+                          fetchMessengerStatus();
+                        } finally {
+                          setSavingAction(false);
+                        }
+                      }}
+                      className="w-full px-6 py-3 bg-[#1877F2] hover:bg-[#166fe5] disabled:opacity-50 text-white rounded-xl font-bold text-sm shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <MessageSquare size={18} />
+                      {t("activateMessengerBot")}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-10 flex flex-col items-center justify-center space-y-4 mt-2">
+                    <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 mb-2">
+                      <MessageSquare size={32} />
+                    </div>
+                    <p className="text-xs text-slate-500 max-w-sm text-center leading-relaxed">
+                      {t("signInFacebookFirst")}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={startFacebookConnect}
+                      className="px-6 py-3 bg-[#1877F2] hover:bg-[#166fe5] text-white rounded-xl font-bold text-sm shadow-lg transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      <MessageSquare size={18} />
+                      {t("connectMessengerBot")}
+                    </button>
                   </div>
                 )}
               </div>
-            </div>
-          )}
+            )}
+          {/* TAB 5 END */}
+          </div>
+        )}
 
           {/* CRM DIRECT SUPPORT LIVE WORKSPACE & CHAT TAKE-OVER CRM */}
           {activeTab === "live_support" && (
@@ -2036,7 +2551,7 @@ export default function App() {
             <TelegramSimulator
               session={activeSession}
               products={storeState.products}
-              deliveryZones={storeState.deliveryZones}
+              deliveryZones={deliveryZones}
               onStateUpdated={() => fetchState(true)}
               onSendReply={async (text) => {
                 fetchState(true);

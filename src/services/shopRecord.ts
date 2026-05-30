@@ -21,6 +21,8 @@ export function shopRecordToFormData(shop: ShopRecord): OnboardingFormState {
     business_goal: p?.business_goal ?? "",
     bot_personality: botPersonality,
     matter_most: p?.matter_most ?? botPersonality,
+    phone: shop.phone ?? p?.phone ?? "",
+    business_address: shop.address ?? p?.business_address ?? "",
   };
 }
 
@@ -43,6 +45,8 @@ export function emptyOnboardingForm(
     business_goal: "",
     bot_personality: "Friendly",
     matter_most: "Friendly",
+    phone: "",
+    business_address: "",
   };
 }
 
@@ -61,6 +65,8 @@ export type OnboardingFormPayload = {
   matterMost?: string;
   marketingMethod?: string;
   mainlySell?: string;
+  phone?: string;
+  address?: string;
 };
 
 export function buildOnboardingProfile(
@@ -87,15 +93,18 @@ export function buildOnboardingProfile(
     payment_method: pick(form.paymentMethod, existing?.payment_method ?? ""),
     delivery_method: pick(form.deliveryMethod, existing?.delivery_method ?? ""),
     bot_personality: botPersonality,
+    phone: pick(form.phone, existing?.phone ?? ""),
+    business_address: pick(form.address, existing?.business_address ?? ""),
   };
 }
 
 export async function getShopForOwner(ownerId: string): Promise<ShopRecord | null> {
   const { data, error } = await supabase
     .from("shops")
-    .select("id, owner_id, shop_name, owner_name, onboarding_completed, onboarding_profile")
+    .select("id, owner_id, shop_name, owner_name, phone, address, onboarding_completed, onboarding_profile")
     .eq("owner_id", ownerId)
-    .order("created_at", { ascending: false })
+    .order("onboarding_completed", { ascending: false })
+    .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
@@ -111,20 +120,28 @@ export async function saveShopOnboarding(
   const profile = buildOnboardingProfile(form, existing?.onboarding_profile);
   const now = new Date().toISOString();
 
+  const phone = (form.phone ?? profile.phone ?? "").trim();
+  const address = (form.address ?? profile.business_address ?? "").trim();
+
   const row = {
     shop_name: form.shopName.trim(),
     owner_name: form.ownerName.trim() || null,
+    phone: phone || null,
+    address: address || null,
     onboarding_profile: profile,
     onboarding_completed: true,
     updated_at: now,
   };
+
+  const shopColumns =
+    "id, owner_id, shop_name, owner_name, phone, address, onboarding_completed, onboarding_profile";
 
   if (existing?.id) {
     const { data, error } = await supabase
       .from("shops")
       .update(row)
       .eq("id", existing.id)
-      .select("id, owner_id, shop_name, owner_name, onboarding_completed, onboarding_profile")
+      .select(shopColumns)
       .single();
     if (error) throw error;
     return data as ShopRecord;
@@ -133,7 +150,7 @@ export async function saveShopOnboarding(
   const { data, error } = await supabase
     .from("shops")
     .insert({ ...row, owner_id: ownerId })
-    .select("id, owner_id, shop_name, owner_name, onboarding_completed, onboarding_profile")
+    .select(shopColumns)
     .single();
 
   if (error) throw error;

@@ -394,6 +394,13 @@ export default function App() {
           if (shopRow.owner_name) {
             data.config.ownerName = shopRow.owner_name;
           }
+          const shopPhone =
+            shopRow.phone?.trim() ||
+            shopRow.onboarding_profile?.phone?.trim() ||
+            "";
+          if (shopPhone) {
+            data.config.phone = shopPhone;
+          }
         } else {
           setShopRecord(null);
         }
@@ -441,8 +448,17 @@ export default function App() {
 
   const fetchDeliveryZonesFromApi = async () => {
     setDeliveryZonesLoading(true);
+    const shopAddress =
+      shopRecord?.address?.trim() ||
+      shopRecord?.onboarding_profile?.business_address?.trim() ||
+      "";
     try {
-      const result = await fetchDeliveryMatrix(deliveryZonesPage, 10, deliveryZonesSearch);
+      const result = await fetchDeliveryMatrix(
+        deliveryZonesPage,
+        10,
+        deliveryZonesSearch,
+        shopAddress
+      );
       setDeliveryZones(result.data);
       setDeliveryZonesPagination(result.pagination);
     } catch (err) {
@@ -481,12 +497,18 @@ export default function App() {
     }
   }, [activeTab, storeState, botConnectionTab]);
 
-  // Fetch delivery zones when tab, page or search changes
+  // Fetch delivery zones when tab, page, search, or shop address changes
   useEffect(() => {
     if (activeTab === "delivery") {
       fetchDeliveryZonesFromApi();
     }
-  }, [activeTab, deliveryZonesPage, deliveryZonesSearch]);
+  }, [
+    activeTab,
+    deliveryZonesPage,
+    deliveryZonesSearch,
+    shopRecord?.address,
+    shopRecord?.onboarding_profile?.business_address,
+  ]);
 
   // Fetch AI strategy when the selected language changes
   useEffect(() => {
@@ -823,7 +845,7 @@ export default function App() {
     : emptyOnboardingForm(storeState.config.shopName, storeState.config.ownerName);
 
   const handleWizardComplete = async (
-    profile: { shopName: string; ownerName: string },
+    profile: { shopName: string; ownerName: string; phone: string; businessAddress: string },
     aiSummary: string,
     wasEdit: boolean
   ) => {
@@ -833,6 +855,7 @@ export default function App() {
         ...storeState.config,
         shopName: profile.shopName,
         ownerName: profile.ownerName,
+        phone: profile.phone || storeState.config.phone,
         onboardingCompleted: true,
       },
     };
@@ -845,6 +868,7 @@ export default function App() {
         ...storeState.config,
         shopName: profile.shopName,
         ownerName: profile.ownerName,
+        phone: profile.phone || storeState.config.phone,
         onboardingCompleted: true,
       });
       await saveShopState(user.id, updatedState);
@@ -1670,40 +1694,31 @@ export default function App() {
                 <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50/50 text-[10px] uppercase font-mono tracking-wider font-semibold text-slate-500">
-                      <th className="p-3">{t("matchedTownship")}</th>
-                      <th className="p-3">{t("rateLabel")}</th>
-                      <th className="p-3">{t("estimatedTransit")}</th>
-                      <th className="p-3 text-center">{t("settingsActions")}</th>
+                      <th className="p-3 w-1/3">{t("matchedTownship")}</th>
+                      <th className="p-3 w-1/3">{t("rateLabel")}</th>
+                      <th className="p-3 w-1/3">{t("estimatedTransit")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white text-slate-600 font-mono">
                     {deliveryZonesLoading ? (
                       <tr>
-                        <td colSpan={4} className="p-8 text-center text-slate-400">
+                        <td colSpan={3} className="p-8 text-center text-slate-400">
                           <RefreshCw size={16} className="animate-spin inline-block mr-2" />
                           Loading...
                         </td>
                       </tr>
                     ) : deliveryZones.length === 0 ? (
                       <tr>
-                        <td colSpan={4} className="p-8 text-center text-slate-400">
+                        <td colSpan={3} className="p-8 text-center text-slate-400">
                           No delivery zones found
                         </td>
                       </tr>
                     ) : (
                       deliveryZones.map((zone) => (
-                        <tr key={zone.id} className="hover:bg-slate-50/50 transition-all">
-                          <td className="p-3 font-bold text-slate-800">{zone.township_name}</td>
-                          <td className="p-3 text-emerald-600 font-bold">{zone.rate.toLocaleString()} MMK</td>
-                          <td className="p-3 text-slate-500">{zone.estimated_transit_timeline}</td>
-                          <td className="p-3 text-center">
-                            <button
-                              onClick={() => handleDeleteZone(zone.id, zone.township_name)}
-                              className="bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold text-[9px] px-2.5 py-1 rounded-md border border-rose-150 cursor-pointer"
-                            >
-                              {t("removeRule")}
-                            </button>
-                          </td>
+<tr key={zone.id} className="hover:bg-slate-50/50 transition-all">
+                          <td className="p-3 font-bold text-slate-800 w-1/3">{zone.township_name}</td>
+                          <td className="p-3 text-emerald-600 font-bold w-1/3">{zone.rate.toLocaleString()} MMK</td>
+                          <td className="p-3 text-slate-500 w-1/3">{zone.estimated_transit_timeline}</td>
                         </tr>
                       ))
                     )}

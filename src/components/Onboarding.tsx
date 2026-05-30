@@ -6,15 +6,22 @@ import {
   ArrowRight,
   ArrowLeft,
   Sparkles,
+  Phone,
+  MapPin,
 } from "lucide-react";
 import { RadioGroup } from "./RadioGroup";
+import { SearchableSelect } from "./SearchableSelect";
 import { useAuth } from "../contexts/AuthContext";
 import { saveShopOnboarding } from "../services/shopRecord";
+import { loadTownships } from "../data/townships";
 import type { OnboardingFormState } from "../types";
 
 interface OnboardingProps {
   lang: "en" | "my";
-  onComplete: (profile: { shopName: string; ownerName: string }, aiSummary: string) => void;
+  onComplete: (
+    profile: { shopName: string; ownerName: string; phone: string; businessAddress: string },
+    aiSummary: string
+  ) => void;
   initialFormData?: OnboardingFormState;
   isEditMode?: boolean;
   onCancelEdit?: () => void;
@@ -36,6 +43,8 @@ const defaultForm = (): OnboardingFormState => ({
   business_goal: "",
   bot_personality: "Friendly",
   matter_most: "Friendly",
+  phone: "",
+  business_address: "",
 });
 
 export function Onboarding({
@@ -171,14 +180,21 @@ export function Onboarding({
         businessGoal: formData.business_goal,
         botPersonality: formData.bot_personality,
         matterMost: formData.matter_most || formData.bot_personality,
+        phone: formData.phone || "",
+        address: formData.business_address || "",
       });
 
       const aiSummary = `Business Profile Saved! Based on your goal of ${formData.business_goal} and ${formData.bot_personality} personality, Sales Brain AI is now optimized for your ${formData.business_category} store.`;
       
-      onComplete({
-        shopName: formData.business_name,
-        ownerName: formData.owner_name,
-      }, aiSummary);
+      onComplete(
+        {
+          shopName: formData.business_name,
+          ownerName: formData.owner_name,
+          phone: formData.phone?.trim() || "",
+          businessAddress: formData.business_address?.trim() || "",
+        },
+        aiSummary
+      );
 
     } catch (err: any) {
       console.error("Error saving onboarding data:", err);
@@ -359,6 +375,32 @@ export function Onboarding({
                   }
                   lang={lang}
                 />
+
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-mono font-extrabold text-slate-400 uppercase block tracking-wider">
+                    {lang === "my" ? "ဖုန်းနံပါတ်" : "Phone Number"}
+                  </label>
+                  <div className="relative">
+                    <Phone className="absolute left-3.5 top-[13px] text-slate-400" size={14} />
+                    <input
+                      type="tel"
+                      value={formData.phone || ""}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      placeholder={lang === "my" ? "ဖုန်းနံပါတ်ထည့်ပါ" : "Enter phone number"}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-10 pr-4 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 h-10.5"
+                    />
+                  </div>
+                </div>
+
+                <div className="relative">
+                  <SearchableSelect
+                    label={lang === "my" ? "စားဝင်ဘက်အမျိုးအစား" : "Business Address (Township)"}
+                    options={loadTownships()}
+                    value={formData.business_address || ""}
+                    onChange={(val) => setFormData({ ...formData, business_address: val })}
+                    lang={lang}
+                  />
+                </div>
               </motion.div>
             )}
 

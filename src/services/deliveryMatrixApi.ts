@@ -25,12 +25,14 @@ export interface DeliveryZoneFormData {
 export async function fetchDeliveryMatrix(
   page: number = 1,
   limit: number = 10,
-  search: string = ""
+  search: string = "",
+  address: string = ""
 ): Promise<DeliveryMatrixResponse> {
   const params = new URLSearchParams({
     page: page.toString(),
     limit: limit.toString(),
     ...(search && { search }),
+    ...(address && { address }),
   });
 
   const response = await fetch(`${API_BASE_URL}/delivery-matrix?${params}`, {

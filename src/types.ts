@@ -94,6 +94,8 @@ export interface OnboardingProfile {
   payment_method: string;
   delivery_method: string;
   bot_personality: string;
+  phone?: string;
+  business_address?: string;
 }
 
 export interface ShopRecord {
@@ -101,6 +103,8 @@ export interface ShopRecord {
   owner_id: string;
   shop_name: string;
   owner_name: string | null;
+  phone?: string | null;
+  address?: string | null;
   onboarding_completed: boolean;
   onboarding_profile: OnboardingProfile | null;
 }
@@ -121,6 +125,8 @@ export interface OnboardingFormState {
   business_goal: string;
   bot_personality: string;
   matter_most: string;
+  phone?: string;
+  business_address?: string;
 }
 
 export interface BusinessOnboarding {

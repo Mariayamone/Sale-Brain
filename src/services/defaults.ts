@@ -9,6 +9,8 @@ export function createEmptyShopState(): SystemState {
       currency: "MMK",
       telegramBotToken: "",
       telegramBotUsername: "",
+      messengerBotId: "",
+      messengerBotName: "",
       onboardingCompleted: false,
     },
     products: [],

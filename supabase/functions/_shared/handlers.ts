@@ -40,6 +40,12 @@ export async function handleAction(
       return handleMarketingImage(ctx, body);
     case "messenger/status":
       return handleMessengerStatus();
+    case "messenger/auth-url":
+      return handleMessengerAuthUrl();
+    case "messenger/connect-page":
+      return handleMessengerConnectPage(ctx, body);
+    case "messenger/disconnect":
+      return handleMessengerDisconnect(ctx);
     default:
       return { error: `Unknown action: ${action}` };
   }
@@ -353,13 +359,65 @@ async function handleMarketingImage(ctx: ShopContext, body: Record<string, unkno
   }
 }
 
+function omnichannelBase(): string {
+  return Deno.env.get("OMNICHANNEL_URL") || "http://localhost:8000";
+}
+
 async function handleMessengerStatus() {
-  const base = Deno.env.get("OMNICHANNEL_URL") || "http://localhost:8000";
+  const base = omnichannelBase();
   try {
     const res = await fetch(`${base}/messenger/status`);
     if (res.ok) return await res.json();
-    return { connected: false, pages: [] };
-  } catch {
-    return { connected: false, pages: [] };
+    return { connected: false, pages: [], error: `Backend returned ${res.status}` };
+  } catch (e) {
+    return {
+      connected: false,
+      pages: [],
+      error: `Cannot reach Omnichannel backend at ${base}. Start uvicorn app.main:app --reload`,
+    };
   }
+}
+
+async function handleMessengerAuthUrl() {
+  const base = omnichannelBase();
+  try {
+    const res = await fetch(`${base}/messenger/auth-url`);
+    if (!res.ok) {
+      const text = await res.text();
+      return { error: text || `Auth URL failed (${res.status})` };
+    }
+    return await res.json();
+  } catch {
+    return {
+      error: `Cannot reach Omnichannel backend at ${base}. Run: uvicorn app.main:app --reload --port 8000`,
+    };
+  }
+}
+
+async function handleMessengerConnectPage(ctx: ShopContext, body: Record<string, unknown>) {
+  const base = omnichannelBase();
+  const pageId = String(body.pageId || body.page_id || "");
+  const res = await fetch(`${base}/messenger/connect-page`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ page_id: pageId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    return { error: (err as { error?: string }).error || "Failed to connect page" };
+  }
+  const data = (await res.json()) as { page_id?: string; page_name?: string };
+  ctx.state.config.messengerBotId = data.page_id || pageId;
+  ctx.state.config.messengerBotName = data.page_name || ctx.state.config.messengerBotName || "";
+  await ctx.save();
+  return { success: true, config: ctx.state.config };
+}
+
+async function handleMessengerDisconnect(ctx: ShopContext) {
+  const base = omnichannelBase();
+  await fetch(`${base}/messenger/disconnect`, { method: "POST" }).catch(() => null);
+  ctx.state.config.messengerBotId = "";
+  ctx.state.config.messengerBotName = "";
+  await ctx.save();
+  return { success: true, config: ctx.state.config };
 }

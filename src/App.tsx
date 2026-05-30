@@ -53,6 +53,7 @@ import { supabase } from "./utils/supabase";
 import { fetchDeliveryMatrix, addDeliveryZone, deleteDeliveryZone } from "./services/deliveryMatrixApi";
 import { buildShopPublicUrl } from "./utils/shopId";
 import { loadTownships } from "./data/townships";
+import QRCode from "qrcode";
 
 // Complete localized dictionary for total English & Burmese translation sync
 const dict = {
@@ -303,6 +304,24 @@ const dict = {
     }
   }
 };
+
+function TelegramQRCode() {
+  const canvasRef = React.useRef<HTMLCanvasElement>(null);
+
+  React.useEffect(() => {
+    if (canvasRef.current) {
+      QRCode.toCanvas(canvasRef.current, "https://t.me/Jjkql_bot", { width: 160, margin: 2 });
+    }
+  }, []);
+
+  return (
+    <div className="flex flex-col items-center gap-2 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+      <canvas ref={canvasRef} className="rounded-lg" />
+      <p className="text-[10px] font-mono text-slate-500">@Jjkql_bot</p>
+      <p className="text-[9px] text-slate-400">Scan to open bot in Telegram</p>
+    </div>
+  );
+}
 
 export default function App() {
   const { user, loading: authLoading, signOut } = useAuth();
@@ -2076,58 +2095,44 @@ export default function App() {
                 <form onSubmit={handleOnboardingSubmit} className="space-y-4 mt-5 text-xs text-slate-600">
                   <div className="space-y-1">
                     <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("storeNameLabel")}</label>
-                    <input
-                      type="text"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                      value={storeState.config.shopName}
-                      onChange={(e) => setStoreState({
-                        ...storeState,
-                        config: { ...storeState.config, shopName: e.target.value }
-                      })}
-                    />
+                    <div className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-xs cursor-not-allowed select-none">
+                      {storeState.config.shopName || "—"}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1">
                       <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("smeOwnerNameLabel")}</label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                        value={storeState.config.ownerName}
-                        onChange={(e) => setStoreState({
-                          ...storeState,
-                          config: { ...storeState.config, ownerName: e.target.value }
-                        })}
-                      />
+                      <div className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-xs cursor-not-allowed select-none">
+                        {storeState.config.ownerName || "—"}
+                      </div>
                     </div>
 
                     <div className="space-y-1">
                       <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("contactPhoneLabel")}</label>
-                      <input
-                        type="text"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                        value={storeState.config.phone}
-                        onChange={(e) => setStoreState({
-                          ...storeState,
-                          config: { ...storeState.config, phone: e.target.value }
-                        })}
-                      />
+                      <div className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-xs cursor-not-allowed select-none">
+                        {storeState.config.phone || "—"}
+                      </div>
                     </div>
                   </div>
 
                   <div className="space-y-1">
                     <label className="text-[9px] font-semibold text-slate-400 uppercase block">{t("telegramBotUsernameLabel")}</label>
-                    <input
-                      type="text"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono"
-                      value={storeState.config.telegramBotUsername}
-                      onChange={(e) => setStoreState({
-                        ...storeState,
-                        config: { ...storeState.config, telegramBotUsername: e.target.value }
-                      })}
-                    />
+                    <div className="w-full bg-slate-100 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-xs cursor-not-allowed select-none">
+                      ရွှေတော်၀င်
+                    </div>
+                    <a
+                      href="https://t.me/Jjkql_bot"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[10px] text-sky-500 hover:text-sky-600 font-mono mt-1"
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L8.32 13.617l-2.96-.924c-.643-.204-.657-.643.136-.953l11.57-4.461c.537-.194 1.006.131.828.942z"/></svg>
+                      t.me/Jjkql_bot
+                    </a>
                   </div>
 
+                  <TelegramQRCode />
 
                   <button
                     type="submit"

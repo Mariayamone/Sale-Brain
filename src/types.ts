@@ -66,6 +66,8 @@ export interface ShopConfig {
   telegramBotToken: string;
   telegramBotUsername: string;
   onboardingCompleted: boolean;
+  messengerBotId?: string;
+  messengerBotName?: string;
   shopId?: string;
   productsMigrated?: boolean;
 }

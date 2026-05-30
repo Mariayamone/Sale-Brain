@@ -146,6 +146,14 @@ const dict = {
     contactPhoneLabel: "Contact Phone Number:",
     telegramBotUsernameLabel: "Telegram Bot Username (@):",
     saveStoreSettingsBtn: "SAVE STORE SETTINGS AND ACTIVATED TELEGRAM VIRTUAL DEPLOY",
+    messengerBotActivationWorkspace: "MESSENGER BOT ACTIVATION WORKSPACE",
+    connectMessengerBot: "Connect Messenger Bot",
+    connectFacebookPage: "Connect Messenger Bot",
+    signInFacebookFirst: "Sign in with Facebook to link your business Page, then choose which Page should run the Messenger bot.",
+    oauthCompleteChoosePage: "Facebook sign-in complete. Select the Page you want to use for Messenger:",
+    activateMessengerBot: "Activate Messenger Bot",
+    selectPageLabel: "Choose your Facebook Page:",
+    disconnectFacebook: "Disconnect Messenger Bot",
     liveSupportRoomHeader: "SME CRM LIVE SUPPORT ROOM",
     chatTakeoverDesc: "",
     activeUserSessionsLabel: "ACTIVE USER SESSIONS:",
@@ -269,6 +277,14 @@ const dict = {
     contactPhoneLabel: "ဆက်သွယ်ရန် ဖုန်းနံပါတ် -",
     telegramBotUsernameLabel: "တယ်လီဂရမ် Bot ယူဇာနိမ်း (@) -",
     saveStoreSettingsBtn: "ဆိုင်အချက်အလက် စနစ် သိမ်းဆည်းပြီး တယ်လီဂရမ်နှင့် ချိတ်ဆက်မည်",
+    messengerBotActivationWorkspace: "မက်ဆင်ဂျာ ဘော့တ် ချိတ်ဆက်မှု စနစ်",
+    connectMessengerBot: "Messenger ဘော့တ် ချိတ်ဆက်ရန်",
+    connectFacebookPage: "Messenger ဘော့တ် ချိတ်ဆက်ရန်",
+    signInFacebookFirst: "Facebook ဖြင့် ဝင်ရောက်ပြီး သင့် Page ကို ရွေးချယ်ပါ။ Messenger ဘော့တ်အတွက် မည်သည့် Page သုံးမည်ကို ရွေးပါ။",
+    oauthCompleteChoosePage: "Facebook ဝင်ရောက်မှု အောင်မြင်ပါပြီ။ Messenger အတွက် Page ရွေးချယ်ပါ:",
+    activateMessengerBot: "Messenger ဘော့တ် စတင်အသုံးပြုရန်",
+    selectPageLabel: "သင်၏ Facebook Page ကို ရွေးချယ်ပါ -",
+    disconnectFacebook: "Facebook Page ချိတ်ဆက်မှု ဖြတ်ရန်",
     liveSupportRoomHeader: "ဆိုင်ရှင် တိုက်ရိုက် ဝယ်သူစကားပြောခန်း (CRM)",
     chatTakeoverDesc: "",
     activeUserSessionsLabel: "လက်ရှိ စကားပြောနေဆဲ ဝယ်သူများ -",
@@ -355,8 +371,16 @@ export default function App() {
   const [shopRecord, setShopRecord] = useState<ShopRecord | null>(null);
   const [editingOnboarding, setEditingOnboarding] = useState(false);
   const [configDraft, setConfigDraft] = useState<ShopConfig | null>(null);
-  const [messengerStatus, setMessengerStatus] = useState<{ connected: boolean; pages: any[] } | null>(null);
+  const [messengerStatus, setMessengerStatus] = useState<{
+    connected: boolean;
+    oauth_completed?: boolean;
+    pending_page_selection?: boolean;
+    pages: { id: string; name: string }[];
+    active_page_id?: string | null;
+    error?: string;
+  } | null>(null);
   const [loadingMessengerStatus, setLoadingMessengerStatus] = useState<boolean>(false);
+  const [pendingPageId, setPendingPageId] = useState<string>("");
 
   // Loaders
   const [loading, setLoading] = useState<boolean>(true);
@@ -502,12 +526,101 @@ export default function App() {
   const fetchMessengerStatus = async () => {
     setLoadingMessengerStatus(true);
     try {
-      const data = await invokeApi<{ connected: boolean; pages: unknown[] }>("messenger/status");
-      setMessengerStatus(data);
+      const data = await invokeApi<{
+        connected: boolean;
+        oauth_completed?: boolean;
+        pending_page_selection?: boolean;
+        pages: { id: string; name: string }[];
+        active_page_id?: string | null;
+        error?: string;
+      }>("messenger/status");
+      const pages = Array.isArray(data.pages) ? data.pages : [];
+      setMessengerStatus({
+        connected: Boolean(data.connected),
+        oauth_completed: Boolean(data.oauth_completed),
+        pending_page_selection: Boolean(data.pending_page_selection),
+        pages,
+        active_page_id: data.active_page_id,
+        error: data.error,
+      });
+      if (data.active_page_id) {
+        setPendingPageId(String(data.active_page_id));
+      } else if (pages.length === 1) {
+        setPendingPageId(pages[0].id);
+      }
     } catch {
-      setMessengerStatus(null);
+      setMessengerStatus({
+        connected: false,
+        pages: [],
+        error: "Could not reach API. Check Omnichannel backend on port 8000.",
+      });
     } finally {
       setLoadingMessengerStatus(false);
+    }
+  };
+
+  const startFacebookConnect = async () => {
+    try {
+      const redirectUri =
+        (import.meta.env.VITE_FB_REDIRECT_URI as string | undefined)?.replace(/\/$/, "") ||
+        `${window.location.origin}/facebook/callback`;
+
+      const data = await invokeApi<{ url?: string; state?: string; error?: string }>(
+        "messenger/auth-url",
+        { redirect_uri: redirectUri }
+      );
+      if (data.error || !data.url) {
+        showToast(
+          data.error ||
+            (lang === "my"
+              ? "Facebook ချိတ်ဆက်မှု မစတင်နိုင်ပါ။"
+              : "Unable to start Facebook login."),
+          "info"
+        );
+        return;
+      }
+
+      if (data.state) {
+        sessionStorage.setItem("fb_oauth_state", data.state);
+      }
+
+      const popup = window.open(data.url, "fb_oauth", "width=620,height=720");
+      if (!popup) {
+        showToast(
+          lang === "my" ? "Popup ကို ခွင့်ပြုပေးပါ။" : "Please allow popups for this site.",
+          "info"
+        );
+        return;
+      }
+
+      const onMessage = (ev: MessageEvent) => {
+        if (ev.data?.type === "messenger_oauth_done") {
+          window.removeEventListener("message", onMessage);
+          fetchMessengerStatus();
+          fetchState(true);
+        }
+      };
+      window.addEventListener("message", onMessage);
+
+      const poll = setInterval(() => {
+        if (popup.closed) {
+          clearInterval(poll);
+          window.removeEventListener("message", onMessage);
+          fetchMessengerStatus();
+          fetchState(true);
+        }
+      }, 2000);
+      setTimeout(() => {
+        clearInterval(poll);
+        window.removeEventListener("message", onMessage);
+      }, 180000);
+    } catch {
+      showToast(
+        lang === "my"
+          ? "Omnichannel backend (port 8000) ကို ဖွင့်ထားပါ။"
+          : "Start Omnichannel backend: uvicorn app.main:app --reload --port 8000",
+        "info"
+      );
     }
   };
 
@@ -553,10 +666,10 @@ export default function App() {
     return () => clearInterval(interval);
   }, [user?.id, authLoading]);
 
-  // Ensure the bot-config form keeps a stable draft while typing
+  // Load Messenger status when opening the Messenger tab (not on every state poll)
   useEffect(() => {
-    if (!storeState) return;
-    if (activeTab === "bot_config") {
+    if (activeTab !== "bot_config" || botConnectionTab !== "messenger") return;
+    if (storeState) {
       setConfigDraft((prev) => prev ?? storeState.config);
       if (botConnectionTab === "messenger") {
         fetchMessengerStatus();
@@ -964,6 +1077,7 @@ export default function App() {
       />
     );
   }
+ 
 
   // Derived dashboard analytics values
   const productsCount = storeState.products.length;
@@ -2015,13 +2129,38 @@ export default function App() {
             </div>
           )}
 
-          {/* TAB 5: TELEGRAM BOT ACTIVATION SETUP */}
+          {/* TAB 5: BOT ACTIVATION SETUP */}
           {activeTab === "bot_config" && (
             <div className="space-y-4">
-              <div className="bg-white border border-slate-200/60 rounded-2xl p-5 shadow-sm text-slate-700">
-                <h3 className="text-xs font-extrabold font-mono text-slate-900 flex items-center gap-2 mb-1 uppercase">
-                  {t("telegramBotActivationWorkspace")}
-                </h3>
+              {/* Bot Type Sub-tabs */}
+              <div className="flex bg-white/50 p-1 rounded-xl border border-sky-100 w-fit">
+                <button
+                  onClick={() => setBotConnectionTab("messenger")}
+                  className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    botConnectionTab === "messenger"
+                      ? "bg-black text-white shadow-sm"
+                      : "text-slate-500 hover:text-black"
+                  }`}
+                >
+                  Messenger
+                </button>
+                <button
+                  onClick={() => setBotConnectionTab("telegram")}
+                  className={`px-4 py-1.5 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                    botConnectionTab === "telegram"
+                      ? "bg-black text-white shadow-sm"
+                      : "text-slate-500 hover:text-black"
+                  }`}
+                >
+                  Telegram
+                </button>
+              </div>
+
+              {botConnectionTab === "telegram" ? (
+                <div className="bg-white border border-slate-200/60 rounded-2xl p-5 shadow-sm text-slate-700 animate-fadeIn">
+                  <h3 className="text-xs font-extrabold font-mono text-slate-900 flex items-center gap-2 mb-1 uppercase">
+                    {t("telegramBotActivationWorkspace")}
+                  </h3>
                 <p className="text-[10px] text-slate-400">{t("oneClickOnboardingDesc")}</p>
 
                 {storeState.config.telegramBotUsername && (
@@ -2143,8 +2282,158 @@ export default function App() {
                   </button>
                 </form>
               </div>
-            </div>
-          )}
+            ) : (
+              <div className="bg-white border border-slate-200/60 rounded-2xl p-5 shadow-sm text-slate-700 animate-fadeIn">
+                <h3 className="text-xs font-extrabold font-mono text-slate-900 flex items-center gap-2 mb-1 uppercase">
+                  {t("messengerBotActivationWorkspace")}
+                </h3>
+                
+                {loadingMessengerStatus && (
+                  <div className="text-[10px] text-slate-400 font-mono mb-3 flex items-center gap-2">
+                    <div className="w-3 h-3 border-2 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
+                    Checking Messenger connection…
+                  </div>
+                )}
+
+                {messengerStatus?.error && !messengerStatus.connected && (
+                  <div className="mb-4 p-3 rounded-lg border border-amber-200 bg-amber-50 text-[10px] text-amber-900">
+                    {messengerStatus.error}
+                  </div>
+                )}
+
+                {messengerStatus?.connected ? (
+                  <div className="space-y-4 mt-5">
+                    <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl flex items-center justify-between gap-3 text-slate-700">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center font-bold text-sm shrink-0">
+                          f
+                        </div>
+                        <div>
+                          <h4 className="text-[11px] font-bold text-slate-900">
+                            Active: {storeState.config.messengerBotName || "Facebook Page"}
+                          </h4>
+                          <p className="text-[9px] text-slate-400 font-mono">
+                            ID: {storeState.config.messengerBotId}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[9px] font-bold text-indigo-600 bg-white px-2 py-1 rounded-lg border border-indigo-100 shadow-sm uppercase tracking-wider">
+                        Live
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setSavingAction(true);
+                        try {
+                          await invokeApi("messenger/disconnect");
+                          if (storeState && user) {
+                            await persistState({
+                              ...storeState,
+                              config: {
+                                ...storeState.config,
+                                messengerBotId: "",
+                                messengerBotName: "",
+                              },
+                            });
+                          }
+                          setPendingPageId("");
+                          showToast(
+                            lang === "my" ? "Messenger ဘော့တ် ချိတ်ဆက်မှု ပြတ်တောက်ပါပြီ" : "Messenger bot disconnected",
+                            "info"
+                          );
+                          fetchMessengerStatus();
+                        } finally {
+                          setSavingAction(false);
+                        }
+                      }}
+                      className="w-full px-4 py-2.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-600 border border-rose-200 hover:bg-rose-100 transition-all cursor-pointer"
+                    >
+                      {t("disconnectFacebook")}
+                    </button>
+                  </div>
+                ) : messengerStatus?.pending_page_selection ? (
+                  <div className="space-y-4 mt-5">
+                    <p className="text-[11px] text-slate-600 leading-relaxed bg-slate-50 border border-slate-200 rounded-xl p-3">
+                      {t("oauthCompleteChoosePage")}
+                    </p>
+                    <div className="space-y-1">
+                      <label className="text-[9px] font-semibold text-slate-400 uppercase block">
+                        {t("selectPageLabel")}
+                      </label>
+                      <select
+                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-800 font-mono text-xs"
+                        value={pendingPageId}
+                        onChange={(e) => setPendingPageId(e.target.value)}
+                      >
+                        <option value="">-- Select Page --</option>
+                        {messengerStatus.pages.map((page) => (
+                          <option key={page.id} value={page.id}>{page.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!pendingPageId || savingAction}
+                      onClick={async () => {
+                        const page = messengerStatus.pages.find((p) => p.id === pendingPageId);
+                        if (!page) return;
+                        setSavingAction(true);
+                        try {
+                          const result = await invokeApi<{
+                            page_id?: string;
+                            page_name?: string;
+                          }>("messenger/connect-page", { pageId: page.id });
+                          if (storeState && user && result.page_id) {
+                            await persistState({
+                              ...storeState,
+                              config: {
+                                ...storeState.config,
+                                messengerBotId: result.page_id,
+                                messengerBotName: result.page_name || page.name,
+                              },
+                            });
+                          }
+                          showToast(
+                            lang === "my"
+                              ? "Messenger ဘော့တ် စတင်အသုံးပြုနိုင်ပါပြီ!"
+                              : "Messenger bot is now active on your Page!",
+                            "success"
+                          );
+                          fetchMessengerStatus();
+                        } finally {
+                          setSavingAction(false);
+                        }
+                      }}
+                      className="w-full px-6 py-3 bg-[#1877F2] hover:bg-[#166fe5] disabled:opacity-50 text-white rounded-xl font-bold text-sm shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <MessageSquare size={18} />
+                      {t("activateMessengerBot")}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="py-10 flex flex-col items-center justify-center space-y-4 mt-2">
+                    <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 mb-2">
+                      <MessageSquare size={32} />
+                    </div>
+                    <p className="text-xs text-slate-500 max-w-sm text-center leading-relaxed">
+                      {t("signInFacebookFirst")}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={startFacebookConnect}
+                      className="px-6 py-3 bg-[#1877F2] hover:bg-[#166fe5] text-white rounded-xl font-bold text-sm shadow-lg transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      <MessageSquare size={18} />
+                      {t("connectMessengerBot")}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          {/* TAB 5 END */}
+          </div>
+        )}
 
           {/* CRM DIRECT SUPPORT LIVE WORKSPACE & CHAT TAKE-OVER CRM */}
           {activeTab === "live_support" && (
